@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.0.8] - 2026-05-XX
+## [0.0.9] - 2026-05-23
+
+### Fixed
+- Camera: recover from a stop timeout instead of leaking the stream task, which left the scanner unable to start after entropy capture (wave_35)
+
+## [0.0.8] - 2026-05-22
 
 ### Added
 - Support for CrowPanel 10.1 (ESP32-P4 board, EK79007 panel, GT911 touch)
