@@ -1,16 +1,26 @@
 #include "key.h"
 #include "../utils/secure_mem.h"
+#include "bip32_path.h"
 #include <esp_log.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <wally_bip39.h>
+#include <wally_core.h>
 #include <wally_crypto.h>
 
 static struct ext_key *master_key = NULL;
 static unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
 static char *stored_mnemonic = NULL;
 static bool key_loaded = false;
+
+#define KEY_MAX_DERIVATION_DEPTH 10
+
+static void fingerprint_to_hex(const unsigned char *fp, char *hex_out) {
+  for (int i = 0; i < BIP32_KEY_FINGERPRINT_LEN; i++) {
+    sprintf(hex_out + (i * 2), "%02x", fp[i]);
+  }
+}
 
 bool key_init(void) {
   key_loaded = false;
@@ -99,94 +109,40 @@ bool key_get_fingerprint_hex(char *hex_out) {
   if (!key_loaded || !hex_out) {
     return false;
   }
-  for (int i = 0; i < BIP32_KEY_FINGERPRINT_LEN; i++) {
-    sprintf(hex_out + (i * 2), "%02x", fingerprint[i]);
-  }
-  hex_out[BIP32_KEY_FINGERPRINT_LEN * 2] = '\0';
+  fingerprint_to_hex(fingerprint, hex_out);
   return true;
 }
 
-// Parse BIP32 path like "m/84'/0'/0'" into uint32_t array
-static bool parse_derivation_path(const char *path, uint32_t *indices_out,
-                                  size_t *depth_out, size_t max_depth) {
-  if (!path || !path[0] || !indices_out || !depth_out) {
+bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out) {
+  if (!mnemonic || !hex_out)
     return false;
-  }
 
-  for (const char *c = path; *c; c++) {
-    if (*c != 'm' && *c != '/' && *c != '\'' && *c != 'h' &&
-        !(*c >= '0' && *c <= '9')) {
-      return false;
-    }
-  }
-
-  const char *p = path;
-  if (p[0] == 'm') {
-    p++;
-    if (p[0] == '/') {
-      p++;
-      if (p[0] == '\0') {
-        return false;
-      }
-    } else if (p[0] != '\0') {
-      return false;
-    }
-  }
-  size_t depth = 0;
-
-  while (*p && depth < max_depth) {
-    uint32_t value = 0;
-    bool has_digits = false;
-
-    if (*p == '0' && p[1] >= '0' && p[1] <= '9') {
-      return false;
-    }
-
-    while (*p >= '0' && *p <= '9') {
-      uint32_t digit = (uint32_t)(*p - '0');
-      if (value > UINT32_MAX / 10 ||
-          (value == UINT32_MAX / 10 && digit > UINT32_MAX % 10)) {
-        return false;
-      }
-      value = value * 10 + digit;
-      p++;
-      has_digits = true;
-    }
-
-    if (!has_digits) {
-      return false;
-    }
-
-    if (*p == '\'' || *p == 'h') {
-      if (value >= BIP32_INITIAL_HARDENED_CHILD) {
-        return false;
-      }
-      value |= BIP32_INITIAL_HARDENED_CHILD;
-      p++;
-    } else if (value >= BIP32_INITIAL_HARDENED_CHILD) {
-      return false;
-    }
-
-    indices_out[depth++] = value;
-
-    if (*p == '/') {
-      p++;
-      if (*p == '\0') {
-        return false;
-      }
-    } else if (*p == '\0') {
-      break;
-    } else {
-      return false;
-    }
-  }
-
-  if (*p != '\0') {
+  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK)
     return false;
-  }
 
-  *depth_out = depth;
-  return true;
+  unsigned char seed[BIP39_SEED_LEN_512];
+  unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+  struct ext_key *mnemonic_key = NULL;
+  bool ok = false;
+
+  if (bip39_mnemonic_to_seed512(mnemonic, NULL, seed, sizeof(seed)) !=
+          WALLY_OK ||
+      bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
+                                &mnemonic_key) != WALLY_OK)
+    goto cleanup;
+
+  if (bip32_key_get_fingerprint(mnemonic_key, fp, BIP32_KEY_FINGERPRINT_LEN) !=
+      WALLY_OK)
+    goto cleanup;
+
+  fingerprint_to_hex(fp, hex_out);
+  ok = true;
+
+cleanup:
+  if (mnemonic_key)
+    bip32_key_free(mnemonic_key);
+  secure_memzero(seed, sizeof(seed));
+  return ok;
 }
 
 bool key_get_xpub(const char *path, char **xpub_out) {
@@ -194,10 +150,11 @@ bool key_get_xpub(const char *path, char **xpub_out) {
     return false;
   }
 
-  uint32_t path_indices[10];
+  uint32_t path_indices[KEY_MAX_DERIVATION_DEPTH];
   size_t path_depth = 0;
 
-  if (!parse_derivation_path(path, path_indices, &path_depth, 10)) {
+  if (!bip32_path_parse(path, path_indices, &path_depth,
+                        KEY_MAX_DERIVATION_DEPTH)) {
     return false;
   }
 
@@ -287,16 +244,38 @@ bool key_get_derived_key(const char *path, struct ext_key **key_out) {
   if (!key_loaded || !path || !key_out) {
     return false;
   }
+  *key_out = NULL;
 
-  uint32_t path_indices[10];
+  uint32_t path_indices[KEY_MAX_DERIVATION_DEPTH];
   size_t path_depth = 0;
 
-  if (!parse_derivation_path(path, path_indices, &path_depth, 10)) {
+  if (!bip32_path_parse(path, path_indices, &path_depth,
+                        KEY_MAX_DERIVATION_DEPTH)) {
     return false;
   }
 
-  int ret = bip32_key_from_parent_path_alloc(
-      master_key, path_indices, path_depth, BIP32_FLAG_KEY_PRIVATE, key_out);
+  return key_get_derived_key_components(path_indices, path_depth, key_out);
+}
+
+bool key_get_derived_key_components(const uint32_t *path, size_t path_depth,
+                                    struct ext_key **key_out) {
+  if (!key_loaded || !key_out || (!path && path_depth > 0) ||
+      path_depth > KEY_MAX_DERIVATION_DEPTH) {
+    return false;
+  }
+  *key_out = NULL;
+
+  if (path_depth == 0) {
+    struct ext_key *key_copy = wally_malloc(sizeof(*key_copy));
+    if (!key_copy)
+      return false;
+    memcpy(key_copy, master_key, sizeof(*key_copy));
+    *key_out = key_copy;
+    return true;
+  }
+
+  int ret = bip32_key_from_parent_path_alloc(master_key, path, path_depth,
+                                             BIP32_FLAG_KEY_PRIVATE, key_out);
   return (ret == WALLY_OK);
 }
 

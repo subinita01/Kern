@@ -6,7 +6,7 @@
 #include "../../core/wallet.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme.h"
-#include "wallet_source_picker.h"
+#include "../../ui/wallet_source_picker.h"
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -260,7 +260,7 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
                                      &written) == WALLY_OK);
   if (!valid) {
     free(content);
-    dialog_show_error("Invalid address", invalid_address_cb, 0);
+    dialog_show_error_timeout("Invalid address", invalid_address_cb, 0);
     return;
   }
 

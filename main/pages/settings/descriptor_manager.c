@@ -367,7 +367,7 @@ static void save_encrypted_cb(void) {
   const registry_entry_t *entry =
       registry_get((size_t)pending_save_descriptor_index);
   if (!entry) {
-    dialog_show_error("No descriptor selected", NULL, 2000);
+    dialog_show_error_timeout("No descriptor selected", NULL, 2000);
     descriptor_manager_page_show();
     return;
   }
@@ -386,7 +386,7 @@ static void save_plaintext_cb(void) {
   const registry_entry_t *entry =
       registry_get((size_t)pending_save_descriptor_index);
   if (!entry) {
-    dialog_show_error("No descriptor selected", NULL, 2000);
+    dialog_show_error_timeout("No descriptor selected", NULL, 2000);
     descriptor_manager_page_show();
     return;
   }
@@ -448,7 +448,7 @@ static void registered_desc_action_cb(size_t index,
   switch (action) {
   case REGISTERED_DESCRIPTOR_ACTION_EXPORT_QR:
     if (!descriptor_string_from_descriptor(entry->desc, &descriptor_string)) {
-      dialog_show_error("Failed to export descriptor", NULL, 2000);
+      dialog_show_error_timeout("Failed to export descriptor", NULL, 2000);
       descriptor_manager_page_show();
       return;
     }
@@ -508,12 +508,10 @@ static void refresh_menu_visibility(void) {
 
   if (main_menu) {
     /* Update Load entry label */
-    if (idx_load >= 0 && main_menu->buttons[idx_load]) {
-      lv_obj_t *label = lv_obj_get_child(main_menu->buttons[idx_load], 0);
-      if (label)
-        lv_label_set_text(label, has_desc ? "Load Other Descriptor"
-                                          : "Load Descriptor");
-    }
+    if (idx_load >= 0)
+      ui_menu_set_entry_label(main_menu, idx_load,
+                              has_desc ? "Load Other Descriptor"
+                                       : "Load Descriptor");
 
     /* Toggle session descriptor actions */
     ui_menu_set_entry_enabled(main_menu, idx_registered, has_desc);

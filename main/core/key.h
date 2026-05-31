@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <wally_bip32.h>
 
 bool key_init(void);
@@ -15,6 +16,7 @@ void key_unload(void);
 bool key_get_fingerprint(unsigned char *fingerprint_out);
 /* Caller-provided buffer of BIP32_KEY_FINGERPRINT_LEN*2 + 1 (9) bytes. */
 bool key_get_fingerprint_hex(char *hex_out);
+bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out);
 
 /* On success, *xpub_out is heap-allocated and must be freed by the caller
  * with wally_free_string(). Public-only -- safe to log. */
@@ -34,6 +36,8 @@ bool key_get_mnemonic_words(char ***words_out, size_t *word_count_out);
  * PRIVATE key material. Caller must free with bip32_key_free(), which
  * zeroizes the private bytes before releasing the allocation. */
 bool key_get_derived_key(const char *path, struct ext_key **key_out);
+bool key_get_derived_key_components(const uint32_t *path, size_t path_depth,
+                                    struct ext_key **key_out);
 
 void key_cleanup(void);
 

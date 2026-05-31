@@ -13,6 +13,7 @@
 // Minimalist theme colors
 #define COLOR_BG lv_color_hex(0x000000)       // Black background
 #define COLOR_PANEL lv_color_hex(0x1a1a1a)    // Dark gray panels
+#define COLOR_BUTTON lv_color_hex(0x333333)   // Button surface
 #define COLOR_WHITE lv_color_hex(0xFFFFFF)    // White text/borders
 #define COLOR_GRAY lv_color_hex(0x888888)     // Gray info text
 #define COLOR_ORANGE lv_color_hex(0xff6600)   // Orange accent
@@ -73,18 +74,19 @@ void theme_init(void) {
   scr_h = lv_disp_get_ver_res(NULL);
   scr_min_dim = scr_w < scr_h ? scr_w : scr_h;
 
-  // Pre-compute all proportional sizes. Vertical-axis sizes (heights, touch
-  // targets) use min_dim so they don't blow up the vertical budget on landscape
-  // displays where scr_w is the larger dimension.
-  sz_button_width = scr_w * 5 / 24;        // 150 @ 720
-  sz_button_height = scr_min_dim * 5 / 36; // 100 @ 720
-  sz_button_spacing = scr_w / 36;          //  20 @ 720
-  sz_default_padding = scr_w / 24;         //  30 @ 720
-  sz_min_touch = scr_min_dim / 8;          //  90 @ 720
-  sz_corner_btn_w = scr_w / 6;             // 120 @ 720
-  sz_corner_btn_h = scr_min_dim / 8;       //  90 @ 720
-  sz_small_padding = scr_w / 72;           //  10 @ 720
-  sz_logo = scr_min_dim * 5 / 18;          // 200 @ 720
+  // All sizes scale with min_dim, the shorter axis: in portrait it is the width
+  // (so portrait boards keep their sizes), while on landscape it caps paddings
+  // and controls to the short side rather than letting the wide axis bloat
+  // them.
+  sz_button_width = scr_min_dim * 5 / 24;  // 150
+  sz_button_height = scr_min_dim * 5 / 36; // 100
+  sz_button_spacing = scr_min_dim / 36;    //  20
+  sz_default_padding = scr_min_dim / 24;   //  30
+  sz_min_touch = scr_min_dim / 8;          //  90
+  sz_corner_btn_w = scr_min_dim / 6;       // 120
+  sz_corner_btn_h = scr_min_dim / 8;       //  90
+  sz_small_padding = scr_min_dim / 72;     //  10
+  sz_logo = scr_min_dim * 5 / 18;          // 200
 
   ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
   theme_font_pair_t small = font_pair_for_size(policy.small_px);
@@ -125,7 +127,7 @@ const lv_font_t *theme_font_medium(void) { return &font_medium; }
 int theme_get_screen_width(void) { return scr_w; }
 int theme_get_screen_height(void) { return scr_h; }
 int theme_get_min_dim(void) { return scr_min_dim; }
-bool theme_is_landscape(void) { return scr_w > scr_h; }
+bool theme_is_landscape(void) { return scr_w >= scr_h; }
 
 int theme_get_button_width(void) { return sz_button_width; }
 int theme_get_button_height(void) { return sz_button_height; }
@@ -194,7 +196,8 @@ void theme_apply_label(lv_obj_t *label, bool is_secondary) {
   if (!label)
     return;
 
-  lv_obj_set_style_text_color(label, COLOR_GRAY, 0);
+  lv_obj_set_style_text_color(label, is_secondary ? COLOR_GRAY : COLOR_WHITE,
+                              0);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
   lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(label, 0, 0);
@@ -204,7 +207,8 @@ void theme_apply_button_label(lv_obj_t *label, bool is_secondary) {
   if (!label)
     return;
 
-  lv_obj_set_style_text_color(label, COLOR_WHITE, 0);
+  lv_obj_set_style_text_color(label, is_secondary ? COLOR_GRAY : COLOR_WHITE,
+                              0);
   lv_obj_set_style_text_font(label, theme_font_medium(), 0);
   lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(label, 0, 0);
@@ -214,22 +218,26 @@ void theme_apply_touch_button(lv_obj_t *btn, bool is_primary) {
   if (!btn)
     return;
 
-  // Default state - minimal transparent background
-  lv_obj_set_style_bg_color(btn, COLOR_BG, LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_30, LV_STATE_DEFAULT);
+  // Shared geometry/text. Default fill: primary = no fill with a thin orange
+  // outline, secondary = solid surface (no border). Both fill orange on press.
   lv_obj_set_style_text_color(btn, COLOR_WHITE, LV_STATE_DEFAULT);
-  lv_obj_set_style_border_width(btn, 0, LV_STATE_DEFAULT);
   lv_obj_set_style_radius(btn, 12, LV_STATE_DEFAULT);
   lv_obj_set_style_pad_all(btn, 15, LV_STATE_DEFAULT);
   lv_obj_set_style_shadow_width(btn, 0, LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_color(btn, is_primary ? COLOR_BG : COLOR_BUTTON,
+                            LV_STATE_DEFAULT);
+  lv_obj_set_style_border_color(btn, COLOR_ORANGE, LV_STATE_DEFAULT);
+  lv_obj_set_style_border_width(btn, is_primary ? 2 : 0, LV_STATE_DEFAULT);
 
-  // Pressed state - orange background
+  // Pressed - both tiers fill orange for unambiguous feedback.
   lv_obj_set_style_bg_color(btn, COLOR_ORANGE, LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_50, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
 
-  // Disabled state
+  // Disabled - fade out fill and border.
   lv_obj_set_style_text_color(btn, COLOR_DISABLED, LV_STATE_DISABLED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, LV_STATE_DISABLED);
+  lv_obj_set_style_border_width(btn, 0, LV_STATE_DISABLED);
 
   lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICK_FOCUSABLE);
 }
@@ -306,7 +314,9 @@ lv_obj_t *theme_create_label(lv_obj_t *parent, const char *text,
 }
 
 lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
-  lv_obj_t *label = theme_create_label(parent, text ? text : "", false);
+  // Secondary (grey) so titles read as quiet section headers and don't compete
+  // with the white button text below them. Matches the ui_menu title colour.
+  lv_obj_t *label = theme_create_label(parent, text ? text : "", true);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
   lv_obj_align(label, LV_ALIGN_TOP_MID, 0, theme_get_default_padding());
   return label;
@@ -319,6 +329,53 @@ void theme_apply_transparent_container(lv_obj_t *obj) {
   lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(obj, 0, 0);
   lv_obj_set_style_pad_all(obj, 0, 0);
+}
+
+lv_obj_t *theme_create_scroll_column(lv_obj_t *parent, int32_t pad,
+                                     int32_t gap) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *cont = lv_obj_create(parent);
+  lv_obj_set_size(cont, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(cont, pad, 0);
+  lv_obj_set_style_pad_gap(cont, gap, 0);
+  theme_apply_screen(cont);
+  lv_obj_add_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+  return cont;
+}
+
+lv_obj_t *theme_create_separator(lv_obj_t *parent, lv_color_t color) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *separator = lv_obj_create(parent);
+  lv_obj_set_size(separator, LV_PCT(100), 2);
+  lv_obj_set_style_bg_color(separator, color, 0);
+  lv_obj_set_style_bg_opa(separator, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(separator, 0, 0);
+  lv_obj_clear_flag(separator, LV_OBJ_FLAG_SCROLLABLE);
+  return separator;
+}
+
+lv_obj_t *theme_create_button_row(lv_obj_t *parent, int32_t gap) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_set_style_pad_gap(row, gap, 0);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  return row;
 }
 
 lv_obj_t *theme_create_flex_row(lv_obj_t *parent) {

@@ -7,10 +7,12 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
+#include "../../ui/power.h"
 #include "../../ui/theme.h"
 #include "../scan/scan.h"
 #include "../settings/wallet_settings.h"
 #include "addresses.h"
+#include "advanced_tools.h"
 #include "backup/backup_menu.h"
 #include "public_key.h"
 #include <bsp/pmic.h>
@@ -25,10 +27,12 @@ static void menu_backup_cb(void);
 static void menu_xpub_cb(void);
 static void menu_addresses_cb(void);
 static void menu_scan_cb(void);
+static void menu_advanced_tools_cb(void);
 static void return_from_backup_menu_cb(void);
 static void return_from_public_key_cb(void);
 static void return_from_addresses_cb(void);
 static void return_from_scan_cb(void);
+static void return_from_advanced_tools_cb(void);
 static void return_from_wallet_settings_cb(void);
 
 static void menu_backup_cb(void) {
@@ -68,6 +72,13 @@ static void menu_scan_cb(void) {
   home_page_hide();
   scan_page_create(lv_screen_active(), return_from_scan_cb);
   scan_page_show();
+}
+
+static void menu_advanced_tools_cb(void) {
+  save_key_snapshot();
+  home_page_hide();
+  advanced_tools_page_create(lv_screen_active(), return_from_advanced_tools_cb);
+  advanced_tools_page_show();
 }
 
 static void power_button_cb(lv_event_t *e) {
@@ -113,6 +124,15 @@ static void return_from_scan_cb(void) {
   home_page_show();
 }
 
+static void return_from_advanced_tools_cb(void) {
+  advanced_tools_page_destroy();
+  if (key_snapshot_changed() || wallet_settings_were_applied()) {
+    home_page_destroy();
+    home_page_create(lv_screen_active());
+  }
+  home_page_show();
+}
+
 static void settings_button_cb(lv_event_t *e) {
   (void)e;
   home_page_hide();
@@ -136,17 +156,21 @@ void home_page_create(lv_obj_t *parent) {
   if (!main_menu)
     return;
 
-  // Replace empty title with key info header
-  lv_obj_add_flag(main_menu->title_label,
-                  LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_t *header = ui_key_info_create(main_menu->container);
-  lv_obj_move_to_index(header, 0);
+  // Replace empty title with key info header inside the nav bar so the
+  // fingerprint/battery row aligns with the power/settings corner buttons.
+  ui_menu_set_title_visible(main_menu, false);
+  lv_obj_t *header = ui_key_info_create(ui_menu_get_nav_bar(main_menu));
   ui_battery_create(header);
 
-  ui_menu_add_entry(main_menu, ICON_QR_CODE "  Scan", menu_scan_cb);
-  ui_menu_add_entry(main_menu, "Extended Public Key", menu_xpub_cb);
-  ui_menu_add_entry(main_menu, "Addresses", menu_addresses_cb);
-  ui_menu_add_entry(main_menu, "Back Up", menu_backup_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_QR_CODE, "Scan", menu_scan_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_XPUB, "Extended Public Key",
+                              menu_xpub_cb);
+  ui_menu_add_entry_with_icon(main_menu, LV_SYMBOL_LIST, "Addresses",
+                              menu_addresses_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_BOX_ARCHIVE, "Back Up",
+                              menu_backup_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_TOOLBOX, "Advanced Tools",
+                              menu_advanced_tools_cb);
 
   // Power button at top-left (power-off on PMIC boards, unload+reboot
   // otherwise)

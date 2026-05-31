@@ -26,6 +26,7 @@
 #include "../load_descriptor_storage.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
+#include "psbt_sign_policy.h"
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>
@@ -148,6 +149,22 @@ static void handle_descriptor_content(const char *descriptor_str);
 static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
 static void descriptor_loaded_info_cb(void *user_data);
+
+static void create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb) {
+  lv_obj_t *button_container = theme_create_button_row(parent, 10);
+  if (!button_container)
+    return;
+
+  lv_obj_t *back_button = theme_create_button(button_container, "Back", false);
+  lv_obj_set_size(back_button, LV_PCT(45), LV_SIZE_CONTENT);
+  lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+  lv_obj_t *sign_button = theme_create_button(button_container, "Sign", false);
+  lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
+  lv_obj_add_event_cb(sign_button, sign_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
+}
 
 // Format satoshis as Bitcoin with visual grouping: "1.00 000 000"
 static void format_btc(char *buf, size_t buf_size, uint64_t sats) {
@@ -400,7 +417,8 @@ static void return_from_qr_scanner_cb(void) {
           handle_descriptor_content(desc);
           free(desc);
         } else {
-          dialog_show_error("Failed to parse descriptor", return_callback, 0);
+          dialog_show_error_timeout("Failed to parse descriptor",
+                                    return_callback, 0);
         }
         return;
       } else if (ur_type && strcmp(ur_type, "bytes") == 0) {
@@ -476,7 +494,7 @@ static void return_from_qr_scanner_cb(void) {
         if (addr_is_mainnet == wallet_is_mainnet) {
           handle_address_content(qr_content);
         } else {
-          dialog_show_error(
+          dialog_show_error_timeout(
               addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
                               : "Address is for Testnet, wallet is on Mainnet",
               return_callback, 3000);
@@ -518,178 +536,17 @@ static void return_from_qr_scanner_cb(void) {
         return;
       }
 
-      /* Policy-gate the sign flow. Walk inputs + outputs, classify each,
-       * and refuse with a specific explanation if any element triggers
-       * a setting-gated condition.
-       *
-       * Order of refusals (strictest first):
-       *   1. nothing signable          → "no inputs match policy"
-       *   2. EXPECTED_OWNED present    → "Expected-owned signing" gate
-       *      (harness against derivation bugs / UTXO-swap attacks)
-       *   3. OWNED_UNSAFE present      → "Permissive signing" gate
-       *      (non-standard path)
-       *   4. EXTERNAL input present    → "Partial signing" gate
-       *      (mixed-input PSBT)
-       *   otherwise                    → review + confirm. */
-      bool any_signable = false;
-      bool any_input_external = false;
-      bool need_perm = false; // any element OWNED_UNSAFE
-      bool need_exp = false;  // any element EXPECTED_OWNED
-
-      char flagged_path[80] = {0};
-      size_t flagged_index = 0;
-      bool flagged_is_input = false;
-      psbt_ownership_t flagged_kind = PSBT_OWNERSHIP_EXTERNAL;
-
-      size_t num_inputs = 0, num_outputs = 0;
-      if (wally_psbt_get_num_inputs(current_psbt, &num_inputs) != WALLY_OK)
-        num_inputs = 0;
-      if (wally_psbt_get_num_outputs(current_psbt, &num_outputs) != WALLY_OK)
-        num_outputs = 0;
-
-        /* Track up to EXTERNAL_INPUT_LIST_CAP external-input indices for
-         * the partial-signing dialog body. Larger PSBTs append "..." instead
-         * of expanding the list — keeps the message bounded. */
-#define EXTERNAL_INPUT_LIST_CAP 4
-      size_t external_inputs[EXTERNAL_INPUT_LIST_CAP];
-      size_t external_count = 0;
-
-      for (size_t i = 0; i < num_inputs; i++) {
-        input_ownership_t own =
-            psbt_classify_input(current_psbt, i, is_testnet);
-        switch (own.ownership) {
-        case PSBT_OWNERSHIP_OWNED_SAFE:
-          any_signable = true;
-          break;
-        case PSBT_OWNERSHIP_OWNED_UNSAFE:
-          any_signable = true;
-          if (!need_perm && !need_exp) {
-            flagged_kind = own.ownership;
-            flagged_index = i;
-            flagged_is_input = true;
-            psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
-                                flagged_path, sizeof(flagged_path));
-          }
-          need_perm = true;
-          break;
-        case PSBT_OWNERSHIP_EXPECTED_OWNED:
-          any_signable = true;
-          /* Expected-owned wins precedence — overwrite any prior flag. */
-          flagged_kind = own.ownership;
-          flagged_index = i;
-          flagged_is_input = true;
-          psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
-                              flagged_path, sizeof(flagged_path));
-          need_exp = true;
-          break;
-        case PSBT_OWNERSHIP_EXTERNAL:
-          any_input_external = true;
-          if (external_count < EXTERNAL_INPUT_LIST_CAP)
-            external_inputs[external_count] = i;
-          external_count++;
-          break;
-        }
-      }
-
-      for (size_t i = 0; i < num_outputs; i++) {
-        output_ownership_t own =
-            psbt_classify_output(current_psbt, i, is_testnet);
-        switch (own.ownership) {
-        case PSBT_OWNERSHIP_OWNED_UNSAFE:
-          if (!need_perm && !need_exp) {
-            flagged_kind = own.ownership;
-            flagged_index = i;
-            flagged_is_input = false;
-            psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
-                                flagged_path, sizeof(flagged_path));
-          }
-          need_perm = true;
-          break;
-        case PSBT_OWNERSHIP_EXPECTED_OWNED:
-          if (!need_exp) {
-            flagged_kind = own.ownership;
-            flagged_index = i;
-            flagged_is_input = false;
-            psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
-                                flagged_path, sizeof(flagged_path));
-          }
-          need_exp = true;
-          break;
-        case PSBT_OWNERSHIP_OWNED_SAFE:
-        case PSBT_OWNERSHIP_EXTERNAL:
-          break;
-        }
-      }
-
-      if (!any_signable) {
-        dialog_show_info(
-            "Cannot sign PSBT", "No inputs match this wallet's signing policy.",
-            descriptor_loaded_info_cb, NULL, DIALOG_STYLE_FULLSCREEN);
-        return;
-      }
-      if (need_exp && !settings_get_expected_owned_signing()) {
-        char body[384];
-        snprintf(body, sizeof(body),
-                 "%s %zu's path %s matches our fingerprint but the script "
-                 "cannot be re-derived from it -- wallet bug or "
-                 "attacker-crafted input.\n"
-                 "If multisig: Load the wallet descriptor.\n"
-                 "To sign anyway: Enable 'Expected-owned signing' in "
-                 "Wallet settings. The device will then trust the PSBT's "
-                 "keypath without verification.",
-                 flagged_is_input ? "Input" : "Output", flagged_index,
-                 flagged_path[0] ? flagged_path : "(unknown)");
-        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
-                         NULL, DIALOG_STYLE_FULLSCREEN);
-        (void)flagged_kind;
-        return;
-      }
-      if (need_perm && !settings_get_permissive_signing()) {
-        char body[384];
-        snprintf(body, sizeof(body),
-                 "%s %zu's path %s is on a non-standard derivation. "
-                 "Enable 'Permissive signing' in Settings > Wallet to "
-                 "proceed.",
-                 flagged_is_input ? "Input" : "Output", flagged_index,
-                 flagged_path[0] ? flagged_path : "(unknown)");
-        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
-                         NULL, DIALOG_STYLE_FULLSCREEN);
-        return;
-      }
-      if (any_input_external && !settings_get_partial_signing()) {
-        char body[384];
-        char idx_list[96];
-        size_t idx_pos = 0;
-        idx_list[0] = '\0';
-        size_t shown = external_count < EXTERNAL_INPUT_LIST_CAP
-                           ? external_count
-                           : EXTERNAL_INPUT_LIST_CAP;
-        for (size_t k = 0; k < shown; k++) {
-          int w = snprintf(idx_list + idx_pos, sizeof(idx_list) - idx_pos,
-                           "%s%zu", k == 0 ? "" : ", ", external_inputs[k]);
-          if (w < 0 || (size_t)w >= sizeof(idx_list) - idx_pos)
-            break;
-          idx_pos += (size_t)w;
-        }
-        if (external_count > EXTERNAL_INPUT_LIST_CAP) {
-          snprintf(idx_list + idx_pos, sizeof(idx_list) - idx_pos, ", ...");
-        }
-        snprintf(body, sizeof(body),
-                 "Input%s %s %s not from this wallet. Enable 'Partial "
-                 "signing' in Settings > Wallet to proceed.",
-                 external_count == 1 ? "" : "s", idx_list,
-                 external_count == 1 ? "is" : "are");
-        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
-                         NULL, DIALOG_STYLE_FULLSCREEN);
+      if (!psbt_sign_policy_allows_review(current_psbt, is_testnet,
+                                          descriptor_loaded_info_cb)) {
         return;
       }
 
       if (!create_psbt_info_display()) {
-        dialog_show_error("Invalid PSBT data", return_callback, 0);
+        dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
       }
     }
   } else {
-    dialog_show_error("Unrecognized QR format", return_callback, 0);
+    dialog_show_error_timeout("Unrecognized QR format", return_callback, 0);
   }
 }
 
@@ -760,13 +617,14 @@ static void mnemonic_confirm_cb(bool confirmed, void *user_data) {
   if (!key_load_from_mnemonic(scanned_mnemonic, NULL,
                               net == WALLET_NETWORK_TESTNET)) {
     SECURE_FREE_STRING(scanned_mnemonic);
-    dialog_show_error("Failed to load mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to load mnemonic", return_callback, 0);
     return;
   }
 
   if (!wallet_init(net)) {
     SECURE_FREE_STRING(scanned_mnemonic);
-    dialog_show_error("Failed to initialize wallet", return_callback, 0);
+    dialog_show_error_timeout("Failed to initialize wallet", return_callback,
+                              0);
     return;
   }
 
@@ -781,7 +639,7 @@ static void handle_mnemonic_content(const char *data, size_t len) {
   char *mnemonic = mnemonic_qr_to_mnemonic(data, len, NULL);
   if (!mnemonic || bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     SECURE_FREE_STRING(mnemonic);
-    dialog_show_error("Invalid mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Invalid mnemonic", return_callback, 0);
     return;
   }
 
@@ -1072,15 +930,7 @@ static bool create_psbt_info_display(void) {
     output_colors[diagram_idx] = error_color();
   }
 
-  psbt_info_container = lv_obj_create(scan_screen);
-  lv_obj_set_size(psbt_info_container, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(psbt_info_container, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(psbt_info_container, LV_FLEX_ALIGN_START,
-                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(psbt_info_container, 10, 0);
-  lv_obj_set_style_pad_gap(psbt_info_container, 10, 0);
-  theme_apply_screen(psbt_info_container);
-  lv_obj_add_flag(psbt_info_container, LV_OBJ_FLAG_SCROLLABLE);
+  psbt_info_container = theme_create_scroll_column(scan_screen, 10, 10);
 
   lv_obj_update_layout(psbt_info_container);
   int32_t diagram_width = lv_obj_get_width(scan_screen) - 20;
@@ -1213,11 +1063,8 @@ static bool create_psbt_info_display(void) {
     }
   }
 
-  lv_obj_t *separator1 = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(separator1, LV_PCT(100), 2);
-  lv_obj_set_style_bg_color(separator1, main_color(), 0);
-  lv_obj_set_style_bg_opa(separator1, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(separator1, 0, 0);
+  lv_obj_t *separator1 =
+      theme_create_separator(psbt_info_container, main_color());
   lv_obj_set_style_margin_top(separator1, 15, 0);
 
   /* Count self-transfers up-front so we can collapse to a totals row when
@@ -1404,48 +1251,14 @@ static bool create_psbt_info_display(void) {
   }
 
   if (fee > 0) {
-    lv_obj_t *separator2 = lv_obj_create(psbt_info_container);
-    lv_obj_set_size(separator2, LV_PCT(100), 2);
-    lv_obj_set_style_bg_color(separator2, main_color(), 0);
-    lv_obj_set_style_bg_opa(separator2, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(separator2, 0, 0);
+    theme_create_separator(psbt_info_container, main_color());
 
     lv_obj_t *fee_row =
         create_btc_value_row(psbt_info_container, "Fee: ", fee, error_color());
     lv_obj_set_width(fee_row, LV_PCT(100));
   }
 
-  lv_obj_t *button_container = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(button_container, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(button_container, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(button_container, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(button_container, 0, 0);
-  lv_obj_set_style_pad_gap(button_container, 10, 0);
-  lv_obj_set_style_bg_opa(button_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(button_container, 0, 0);
-
-  lv_obj_t *back_button = lv_btn_create(button_container);
-  lv_obj_set_size(back_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(back_button, false);
-  lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
-  lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *back_label = lv_label_create(back_button);
-  lv_label_set_text(back_label, "Back");
-  lv_obj_center(back_label);
-  theme_apply_button_label(back_label, false);
-
-  lv_obj_t *sign_button = lv_btn_create(button_container);
-  lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(sign_button, false);
-  lv_obj_add_event_cb(sign_button, sign_button_cb, LV_EVENT_CLICKED, NULL);
-  lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *sign_label = lv_label_create(sign_button);
-  lv_label_set_text(sign_label, "Sign");
-  lv_obj_center(sign_label);
-  theme_apply_button_label(sign_label, false);
+  create_sign_action_row(psbt_info_container, sign_button_cb);
 
   return true;
 }
@@ -1464,7 +1277,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   if (!current_psbt) {
     dismiss_sign_progress();
-    dialog_show_error("No PSBT loaded", NULL, 2000);
+    dialog_show_error_timeout("No PSBT loaded", NULL, 2000);
     return;
   }
 
@@ -1476,7 +1289,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   if (signatures_added == 0) {
     dismiss_sign_progress();
-    dialog_show_error("Failed to sign PSBT", NULL, 2000);
+    dialog_show_error_timeout("Failed to sign PSBT", NULL, 2000);
     return;
   }
 
@@ -1497,7 +1310,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   dismiss_sign_progress();
 
   if (ret != WALLY_OK) {
-    dialog_show_error("Failed to encode PSBT", NULL, 2000);
+    dialog_show_error_timeout("Failed to encode PSBT", NULL, 2000);
     return;
   }
 
@@ -1509,7 +1322,8 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   if (!qr_viewer_page_create_with_format(lv_screen_active(), export_format,
                                          signed_psbt_base64, "Signed PSBT",
                                          return_from_qr_viewer_cb)) {
-    dialog_show_error("Failed to create QR viewer", return_callback, 2000);
+    dialog_show_error_timeout("Failed to create QR viewer", return_callback,
+                              2000);
     return;
   }
 
@@ -1522,7 +1336,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 static void sign_button_cb(lv_event_t *e) {
   (void)e;
   if (!current_psbt) {
-    dialog_show_error("No PSBT loaded", NULL, 2000);
+    dialog_show_error_timeout("No PSBT loaded", NULL, 2000);
     return;
   }
 
@@ -1577,19 +1391,11 @@ static void create_message_sign_display(void) {
   char *address = NULL;
   if (!message_sign_get_address(current_message.derivation_path, testnet,
                                 &address)) {
-    dialog_show_error("Failed to derive address", return_callback, 0);
+    dialog_show_error_timeout("Failed to derive address", return_callback, 0);
     return;
   }
 
-  psbt_info_container = lv_obj_create(scan_screen);
-  lv_obj_set_size(psbt_info_container, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(psbt_info_container, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(psbt_info_container, LV_FLEX_ALIGN_START,
-                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(psbt_info_container, 10, 0);
-  lv_obj_set_style_pad_gap(psbt_info_container, 10, 0);
-  theme_apply_screen(psbt_info_container);
-  lv_obj_add_flag(psbt_info_container, LV_OBJ_FLAG_SCROLLABLE);
+  psbt_info_container = theme_create_scroll_column(scan_screen, 10, 10);
 
   theme_create_page_title(psbt_info_container, "Sign Message");
 
@@ -1611,11 +1417,7 @@ static void create_message_sign_display(void) {
 
   wally_free_string(address);
 
-  lv_obj_t *separator = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(separator, LV_PCT(100), 2);
-  lv_obj_set_style_bg_color(separator, main_color(), 0);
-  lv_obj_set_style_bg_opa(separator, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(separator, 0, 0);
+  theme_create_separator(psbt_info_container, main_color());
 
   lv_obj_t *msg_title =
       theme_create_label(psbt_info_container, "Message:", false);
@@ -1627,45 +1429,14 @@ static void create_message_sign_display(void) {
   lv_obj_set_width(msg_label, LV_PCT(100));
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
 
-  lv_obj_t *button_container = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(button_container, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(button_container, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(button_container, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(button_container, 0, 0);
-  lv_obj_set_style_pad_gap(button_container, 10, 0);
-  lv_obj_set_style_bg_opa(button_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(button_container, 0, 0);
-
-  lv_obj_t *back_button = lv_btn_create(button_container);
-  lv_obj_set_size(back_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(back_button, false);
-  lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
-  lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *back_label = lv_label_create(back_button);
-  lv_label_set_text(back_label, "Back");
-  lv_obj_center(back_label);
-  theme_apply_button_label(back_label, false);
-
-  lv_obj_t *sign_button = lv_btn_create(button_container);
-  lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(sign_button, false);
-  lv_obj_add_event_cb(sign_button, message_sign_button_cb, LV_EVENT_CLICKED,
-                      NULL);
-  lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *sign_label = lv_label_create(sign_button);
-  lv_label_set_text(sign_label, "Sign");
-  lv_obj_center(sign_label);
-  theme_apply_button_label(sign_label, false);
+  create_sign_action_row(psbt_info_container, message_sign_button_cb);
 }
 
 static void message_sign_button_cb(lv_event_t *e) {
   char *sig_b64 = NULL;
   if (!message_sign_sign(current_message.derivation_path,
                          current_message.message, &sig_b64)) {
-    dialog_show_error("Failed to sign message", NULL, 2000);
+    dialog_show_error_timeout("Failed to sign message", NULL, 2000);
     return;
   }
 

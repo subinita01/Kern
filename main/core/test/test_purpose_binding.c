@@ -1,10 +1,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <wally_address.h>
+#include <wally_core.h>
 #include <wally_descriptor.h>
 
-/* Pull in full implementation directly */
-#include "../ss_whitelist.c"
+#include "core/ss_whitelist.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

@@ -168,6 +168,8 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
     # miniz (used by kef.c for raw-deflate compression)
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
     # bbqr (multi-part QR encoding)
@@ -181,8 +183,10 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/input_helpers.c
     ${APP_UI_DIR}/keyboard.c
     ${APP_UI_DIR}/menu.c
-    ${APP_UI_DIR}/nav.c
+    ${APP_UI_DIR}/numeric_keypad.c
+    ${APP_UI_DIR}/power.c
     ${APP_UI_DIR}/word_selector.c
+    ${APP_UI_DIR}/wallet_source_picker.c
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
     ${APP_UI_DIR}/sankey.c
@@ -257,6 +261,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/new_mnemonic/entropy_from_camera.c
     # Home
     ${APP_PAGES_DIR}/home/home.c
+    ${APP_PAGES_DIR}/home/advanced_tools.c
+    ${APP_PAGES_DIR}/home/bip85.c
     ${APP_PAGES_DIR}/home/addresses.c
     ${APP_PAGES_DIR}/home/public_key.c
     ${APP_PAGES_DIR}/home/backup/backup_menu.c
@@ -274,7 +280,6 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/shared/key_confirmation.c
     ${APP_PAGES_DIR}/shared/mnemonic_editor.c
     ${APP_PAGES_DIR}/shared/storage_browser.c
-    ${APP_PAGES_DIR}/shared/wallet_source_picker.c
     ${APP_PAGES_DIR}/shared/wipe_flash_dialog.c
     # Top-level pages
     ${APP_PAGES_DIR}/capture_entropy.c
@@ -285,6 +290,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/store_mnemonic.c
     # Scan page
     ${APP_PAGES_DIR}/scan/scan.c
+    ${APP_PAGES_DIR}/scan/psbt_sign_policy.c
     # Dev tools
     ${APP_PAGES_DIR}/dev_tools/dev_menu.c
     ${APP_PAGES_DIR}/dev_tools/snapshot.c
@@ -373,7 +379,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},wave_35>:CONFIG_KERN_BOARD_WAVE_35=1>
     $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
     $<$<STREQUAL:${SIM_BOARD},wave_43>:CONFIG_KERN_BOARD_WAVE_43=1>
-    $<$<STREQUAL:${SIM_BOARD},crowpanel_101>:CONFIG_KERN_BOARD_CROWPANEL_101=1>
+    $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
 )
 
 target_compile_options(kern_simulator PRIVATE

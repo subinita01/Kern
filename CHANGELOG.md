@@ -1,6 +1,30 @@
 # Changelog
 
-## [0.0.8] - 2026-05-XX
+## [0.0.10] - 2026-05-30
+
+### Added
+- Login screen branding: pulsing logo, dice icon, and an About info button in the top-right corner
+- Menu items can carry an icon
+- CrowPanel 10.1 case
+
+### Changed
+- Landscape layouts for square devices, menus, and the public key page (2x2 grid)
+- Harmonized page titles, corner buttons, two-tier buttons, and theme-based dialog spacing
+- Danger dialogs use a warning icon and semantic colours
+- Bumped libwally-core to 1.5.3
+
+### Fixed
+- Taproot PSBTs: testnet is detected correctly (no longer misread as mainnet) and change/self-transfer outputs are recognized instead of being treated as spends
+- Theme paddings and button widths scale to the smallest screen dimension
+- Mnemonic word-grid and battery icon alignment
+- About page logo/QR sizing in landscape
+
+## [0.0.9] - 2026-05-23
+
+### Fixed
+- Camera: recover from a stop timeout instead of leaking the stream task, which left the scanner unable to start after entropy capture (wave_35)
+
+## [0.0.8] - 2026-05-22
 
 ### Added
 - Support for CrowPanel 10.1 (ESP32-P4 board, EK79007 panel, GT911 touch)
@@ -8,6 +32,7 @@
 - Simulator now uses production storage with a file-backed SPIFFS shim
 - Optional 4-bit custom GPIO routing for SD card (D1/D2/D3 Kconfig); defaults preserve the SDMMC IOMUX fast path
 - Camera: SC2336 image sensor auto-detected alongside OV5647 (some CrowPanel modules ship with SC2336)
+- Advanced Tools menu with BIP85 → BIP39 child mnemonic derivation (12/24 words, configurable child index)
 
 
 ### Fixed

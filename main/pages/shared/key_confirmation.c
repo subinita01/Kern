@@ -8,12 +8,8 @@
 #include "../../ui/dialog.h"
 #include "../../ui/theme.h"
 #include "../../utils/memory_utils.h"
-#include "../../utils/secure_mem.h"
 #include <lvgl.h>
 #include <string.h>
-#include <wally_bip32.h>
-#include <wally_bip39.h>
-#include <wally_core.h>
 
 #define LOADING_DELAY_MS 1000
 
@@ -34,14 +30,15 @@ static void loading_timer_cb(lv_timer_t *timer) {
   if (key_load_from_mnemonic(mnemonic_content, NULL,
                              net == WALLET_NETWORK_TESTNET)) {
     if (!wallet_init(net)) {
-      dialog_show_error("Failed to initialize wallet", return_callback, 0);
+      dialog_show_error_timeout("Failed to initialize wallet", return_callback,
+                                0);
       return;
     }
     registry_init(net == WALLET_NETWORK_TESTNET);
     if (success_callback)
       success_callback();
   } else {
-    dialog_show_error("Failed to load key", return_callback, 0);
+    dialog_show_error_timeout("Failed to load key", return_callback, 0);
   }
 }
 
@@ -112,36 +109,17 @@ void key_confirmation_page_create(lv_obj_t *parent, void (*return_cb)(void),
   SAFE_FREE_STATIC(mnemonic_content);
   mnemonic_content = mnemonic_qr_to_mnemonic(content, content_len, NULL);
   if (!mnemonic_content) {
-    dialog_show_error("Invalid mnemonic phrase", return_callback, 0);
+    dialog_show_error_timeout("Invalid mnemonic phrase", return_callback, 0);
     return;
   }
 
-  unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
-  unsigned char seed[BIP39_SEED_LEN_512];
-  struct ext_key *master_key = NULL;
-
-  if (bip39_mnemonic_to_seed512(mnemonic_content, NULL, seed, sizeof(seed)) !=
-          WALLY_OK ||
-      bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
-                                &master_key) != WALLY_OK) {
-    secure_memzero(seed, sizeof(seed));
-    dialog_show_error("Failed to process mnemonic", return_callback, 0);
-    return;
-  }
-
-  bip32_key_get_fingerprint(master_key, fingerprint, BIP32_KEY_FINGERPRINT_LEN);
-  secure_memzero(seed, sizeof(seed));
-  bip32_key_free(master_key);
-
-  char *fingerprint_hex = NULL;
-  if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
-                           &fingerprint_hex) != WALLY_OK) {
-    dialog_show_error("Failed to format fingerprint", return_callback, 0);
+  char fingerprint_hex[BIP32_KEY_FINGERPRINT_LEN * 2 + 1];
+  if (!key_mnemonic_fingerprint_hex(mnemonic_content, fingerprint_hex)) {
+    dialog_show_error_timeout("Failed to process mnemonic", return_callback, 0);
     return;
   }
 
   create_ui(fingerprint_hex);
-  wally_free_string(fingerprint_hex);
 }
 
 void key_confirmation_page_show(void) {

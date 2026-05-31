@@ -80,11 +80,12 @@ static bool apply_wallet_changes(void) {
   wallet_unload();
   if (!key_load_from_mnemonic(mnemonic_content, stored_passphrase,
                               is_testnet)) {
-    dialog_show_error("Failed to reload key", return_callback, 0);
+    dialog_show_error_timeout("Failed to reload key", return_callback, 0);
     return false;
   }
   if (!wallet_init(selected_network)) {
-    dialog_show_error("Failed to initialize wallet", return_callback, 0);
+    dialog_show_error_timeout("Failed to initialize wallet", return_callback,
+                              0);
     return false;
   }
   registry_init(is_testnet);
@@ -131,8 +132,14 @@ static void update_title_with_passphrase(const char *passphrase) {
   // Clear existing content
   lv_obj_clean(title_cont);
 
+  // The pair row is centered in the nav band; reserving the back-button zone
+  // on the left shifts it right so the base fingerprint clears the button.
+  // A single fingerprint is narrow enough to stay centered.
+  lv_obj_t *bar = lv_obj_get_parent(title_cont);
+
   // If no passphrase, show only base fingerprint (highlighted)
   if (!passphrase || passphrase[0] == '\0') {
+    lv_obj_set_style_pad_left(bar, 0, 0);
     add_fingerprint_pair(title_cont, base_fingerprint_hex, true);
     return;
   }
@@ -161,6 +168,8 @@ static void update_title_with_passphrase(const char *passphrase) {
   char *passphrase_fp_hex = NULL;
   if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
                            &passphrase_fp_hex) == WALLY_OK) {
+    lv_obj_set_style_pad_left(bar, theme_get_corner_button_width(), 0);
+
     // Base fingerprint (not highlighted)
     add_fingerprint_pair(title_cont, base_fingerprint_hex, false);
 
@@ -239,7 +248,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Get current mnemonic for later use
   if (!key_get_mnemonic(&mnemonic_content)) {
-    dialog_show_error("Failed to get mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to get mnemonic", return_callback, 0);
     return;
   }
 
@@ -252,7 +261,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
       bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
                                 &master_key) != WALLY_OK) {
     secure_memzero(seed, sizeof(seed));
-    dialog_show_error("Failed to process mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to process mnemonic", return_callback, 0);
     return;
   }
 
@@ -264,7 +273,8 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   char *fingerprint_hex = NULL;
   if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
                            &fingerprint_hex) != WALLY_OK) {
-    dialog_show_error("Failed to format fingerprint", return_callback, 0);
+    dialog_show_error_timeout("Failed to format fingerprint", return_callback,
+                              0);
     return;
   }
 
@@ -278,36 +288,35 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(wallet_settings_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(wallet_settings_screen);
   lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(wallet_settings_screen, theme_get_default_padding(),
+                           0);
+  lv_obj_set_style_pad_top(wallet_settings_screen, theme_get_small_padding(),
+                           0);
+  lv_obj_set_flex_flow(wallet_settings_screen, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(wallet_settings_screen, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(wallet_settings_screen, theme_get_default_padding(),
+                           0);
 
-  int32_t top_h = theme_get_screen_height() * 5 / 36; // 100 @ 720
-
-  // Top bar (same as key_confirmation.c)
-  lv_obj_t *top = lv_obj_create(wallet_settings_screen);
-  lv_obj_set_size(top, LV_PCT(100), top_h);
-  lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_opa(top, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(top, 0, 0);
-  lv_obj_set_style_pad_all(top, 0, 0);
-  lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
-
-  back_button = ui_create_back_button(top, back_btn_cb);
-
-  // Header container for fingerprint and derivation (centered in top bar)
-  lv_obj_t *header_cont = theme_create_flex_column(top);
-  lv_obj_set_style_pad_row(header_cont, 4, 0);
-  lv_obj_align(header_cont, LV_ALIGN_CENTER, 0, 0);
+  // Top nav bar: fingerprint pair centered in the corner-button band so it
+  // aligns with the back button.
+  lv_obj_t *nav_bar = lv_obj_create(wallet_settings_screen);
+  lv_obj_set_size(nav_bar, LV_PCT(100), theme_get_corner_button_height());
+  theme_apply_transparent_container(nav_bar);
+  lv_obj_set_flex_flow(nav_bar, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(nav_bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(nav_bar, LV_OBJ_FLAG_SCROLLABLE);
 
   // Container for fingerprint pair(s)
-  title_cont = theme_create_flex_row(header_cont);
+  title_cont = theme_create_flex_row(nav_bar);
   lv_obj_set_style_pad_column(title_cont, 8, 0);
-
-  // Add initial fingerprint (highlighted)
   add_fingerprint_pair(title_cont, base_fingerprint_hex, true);
 
-  // Content container below top bar
+  // Content below the nav bar — scrollable column of settings rows.
   lv_obj_t *content = lv_obj_create(wallet_settings_screen);
-  lv_obj_set_size(content, LV_PCT(100), LV_VER_RES - top_h);
-  lv_obj_align(content, LV_ALIGN_TOP_MID, 0, top_h);
+  lv_obj_set_width(content, LV_PCT(100));
+  lv_obj_set_flex_grow(content, 1);
   lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(content, 0, 0);
   lv_obj_set_style_pad_all(content, 0, 0);
@@ -352,16 +361,25 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   /* Session Descriptors moved into the Descriptors sub-page
    * (descriptor_manager_page). This page is one level shallower. */
+
+  // Back button (on parent for absolute positioning)
+  back_button = ui_create_back_button(parent, back_btn_cb);
 }
 
 void wallet_settings_page_show(void) {
   if (wallet_settings_screen)
     lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_HIDDEN);
+  // Back button is parented to the screen, not wallet_settings_screen, so its
+  // visibility has to be toggled alongside the page.
+  if (back_button)
+    lv_obj_clear_flag(back_button, LV_OBJ_FLAG_HIDDEN);
 }
 
 void wallet_settings_page_hide(void) {
   if (wallet_settings_screen)
     lv_obj_add_flag(wallet_settings_screen, LV_OBJ_FLAG_HIDDEN);
+  if (back_button)
+    lv_obj_add_flag(back_button, LV_OBJ_FLAG_HIDDEN);
 }
 
 void wallet_settings_page_destroy(void) {
@@ -372,7 +390,13 @@ void wallet_settings_page_destroy(void) {
     lv_obj_del(wallet_settings_screen);
     wallet_settings_screen = NULL;
   }
-  back_button = NULL;
+
+  // Back button lives on the parent screen, not wallet_settings_screen, so
+  // deleting the screen above doesn't take it down — delete it explicitly.
+  if (back_button) {
+    lv_obj_del(back_button);
+    back_button = NULL;
+  }
 
   network_dropdown = NULL;
   title_cont = NULL;

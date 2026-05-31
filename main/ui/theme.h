@@ -29,7 +29,8 @@ int theme_get_min_dim(void);
 // True when the display is wider than tall.
 bool theme_is_landscape(void);
 
-// Theme sizing constants (all proportional to screen width)
+// Theme sizing constants, all proportional to min_dim (the shorter screen
+// axis) so they stay compact and tappable in either orientation.
 int theme_get_button_width(void);
 int theme_get_button_height(void);
 int theme_get_button_spacing(void);
@@ -54,6 +55,10 @@ lv_obj_t *theme_create_label(lv_obj_t *parent, const char *text,
                              bool is_secondary);
 lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text);
 void theme_apply_transparent_container(lv_obj_t *obj);
+lv_obj_t *theme_create_scroll_column(lv_obj_t *parent, int32_t pad,
+                                     int32_t gap);
+lv_obj_t *theme_create_separator(lv_obj_t *parent, lv_color_t color);
+lv_obj_t *theme_create_button_row(lv_obj_t *parent, int32_t gap);
 lv_obj_t *theme_create_flex_row(lv_obj_t *parent);
 lv_obj_t *theme_create_flex_column(lv_obj_t *parent);
 lv_obj_t *theme_create_dropdown(lv_obj_t *parent, const char *options);

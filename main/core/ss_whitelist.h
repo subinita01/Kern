@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bip32_path.h"
+#include "script_templates.h"
+
 typedef enum {
   SS_SCRIPT_P2PKH = 0,   // BIP44, purpose 44
   SS_SCRIPT_P2SH_P2WPKH, // BIP49, purpose 49
@@ -38,16 +41,15 @@ typedef struct {
   (MAX_KEYPATH_ORIGIN_DEPTH + MAX_KEYPATH_TAIL_DEPTH)
 
 static inline bool ss_is_hardened(uint32_t component) {
-  return (component & 0x80000000u) != 0;
+  return bip32_path_is_hardened(component);
 }
 
 static inline uint32_t ss_unharden(uint32_t component) {
-  return component & 0x7fffffffu;
+  return bip32_path_unharden(component);
 }
 
 static inline uint32_t ss_u32_le(const unsigned char *bytes) {
-  return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
-         ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+  return bip32_path_u32_le(bytes);
 }
 
 bool ss_keypath_parse(const unsigned char *keypath_after_fp,
@@ -57,8 +59,10 @@ bool ss_keypath_parse(const unsigned char *keypath_after_fp,
  * bytes). */
 #define SS_KEYPATH_FMT_MAX 32
 
-#define SS_P2SH_P2WPKH_REDEEM_LEN 22 /* OP_0 <20-byte pkh> */
-#define SS_P2SH_P2WPKH_SPK_LEN 23    /* OP_HASH160 <20-byte hash> OP_EQUAL */
+#define SS_P2SH_P2WPKH_REDEEM_LEN                                              \
+  SCRIPT_TEMPLATE_P2SH_P2WPKH_REDEEM_LEN /* OP_0 <20-byte pkh> */
+#define SS_P2SH_P2WPKH_SPK_LEN                                                 \
+  SCRIPT_TEMPLATE_P2SH_P2WPKH_SPK_LEN /* OP_HASH160 <20-byte hash> OP_EQUAL */
 
 bool ss_keypath_format(const ss_keypath_t *kp, char *buf, size_t buf_size);
 
@@ -95,7 +99,8 @@ bool ss_address(ss_script_type_t script, uint32_t account, uint32_t chain,
  *   84 ↔ SS_SCRIPT_P2WPKH
  *   86 ↔ SS_SCRIPT_P2TR
  * Any other combination returns false.
- * Used by try_match_whitelist (hard enforcement — mismatch means no claim).
+ * Used by whitelist claim matching (hard enforcement — mismatch means no
+ * claim).
  */
 bool purpose_script_binding_check_strict(uint32_t purpose,
                                          ss_script_type_t outer_script);

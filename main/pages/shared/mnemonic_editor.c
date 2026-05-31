@@ -550,7 +550,7 @@ static void load_btn_cb(lv_event_t *e) {
   }
 
   if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    dialog_show_error("Invalid checksum", NULL, 0);
+    dialog_show_error_timeout("Invalid checksum", NULL, 0);
     return;
   }
 
@@ -560,11 +560,6 @@ static void load_btn_cb(lv_event_t *e) {
                                success_callback, mnemonic, strlen(mnemonic));
   key_confirmation_page_show();
 }
-
-#define GRID_MARGIN_H 10
-#define GRID_TOP_OFFSET 80 // Below back button area (20 padding + 60 button)
-#define GRID_BOTTOM_OFFSET                                                     \
-  80 // Above load button area (10 margin + 60 button + 10)
 
 static lv_obj_t *create_column(lv_obj_t *parent, int x, int width, int height) {
   lv_obj_t *col = lv_obj_create(parent);
@@ -611,11 +606,17 @@ static void create_word_grid(void) {
   bool two_columns = (total_words > 12);
   int screen_width = theme_get_screen_width();
   int screen_height = theme_get_screen_height();
-  int grid_width = screen_width - (2 * GRID_MARGIN_H);
-  int grid_height = screen_height - GRID_TOP_OFFSET - GRID_BOTTOM_OFFSET;
+  int margin_h = theme_get_small_padding();
+  // Clear the corner back button on top and the load button at the bottom,
+  // both sized proportionally to the screen, leaving a small gap each side.
+  int top_offset =
+      theme_get_corner_button_height() + 2 * theme_get_small_padding();
+  int bottom_offset = theme_get_min_touch_size() + theme_get_default_padding();
+  int grid_width = screen_width - (2 * margin_h);
+  int grid_height = screen_height - top_offset - bottom_offset;
 
   word_grid_container = lv_obj_create(mnemonic_editor_screen);
-  lv_obj_set_pos(word_grid_container, GRID_MARGIN_H, GRID_TOP_OFFSET);
+  lv_obj_set_pos(word_grid_container, margin_h, top_offset);
   lv_obj_set_size(word_grid_container, grid_width, grid_height);
   lv_obj_set_style_bg_opa(word_grid_container, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(word_grid_container, 0, 0);
@@ -709,14 +710,14 @@ void mnemonic_editor_page_create(lv_obj_t *parent, void (*return_cb)(void),
   is_new_mnemonic = new_mnemonic;
 
   if (!bip39_filter_init()) {
-    dialog_show_error("Failed to load wordlist", return_cb, 0);
+    dialog_show_error_timeout("Failed to load wordlist", return_cb, 0);
     return;
   }
 
   parse_mnemonic(mnemonic);
 
   if (total_words == 0) {
-    dialog_show_error("No words in mnemonic", return_cb, 0);
+    dialog_show_error_timeout("No words in mnemonic", return_cb, 0);
     return;
   }
 
