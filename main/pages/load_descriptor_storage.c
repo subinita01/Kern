@@ -12,19 +12,33 @@
 #include <string.h>
 
 static void (*success_callback)(void) = NULL;
+static char *pending_kef_descriptor = NULL;
 
 /* ---------- Descriptor validation callback ---------- */
 
+static void success_callback_wrapper(void *user_data) {
+  (void)user_data;
+  if (success_callback)
+    success_callback();
+}
+
 static void descriptor_validation_cb(descriptor_validation_result_t result,
                                      void *user_data) {
-  (void)user_data;
-
   if (result == VALIDATION_SUCCESS) {
-    if (success_callback)
-      success_callback();
+    if (user_data) {
+      free(pending_kef_descriptor);
+      pending_kef_descriptor = NULL;
+      dialog_show_info("Loaded", "Descriptor loaded for this session",
+                       success_callback_wrapper, NULL, DIALOG_STYLE_OVERLAY);
+    } else {
+      if (success_callback)
+        success_callback();
+    }
     return;
   }
 
+  free(pending_kef_descriptor);
+  pending_kef_descriptor = NULL;
   descriptor_loader_show_error(result);
   storage_browser_show();
 }
@@ -41,7 +55,7 @@ static void success_from_kef_decrypt(const uint8_t *data, size_t len) {
   char *descriptor_str = malloc(len + 1);
   if (!descriptor_str) {
     kef_decrypt_page_destroy();
-    dialog_show_error("Out of memory", NULL, 0);
+    dialog_show_error_timeout("Out of memory", NULL, 0);
     storage_browser_show();
     return;
   }
@@ -50,9 +64,13 @@ static void success_from_kef_decrypt(const uint8_t *data, size_t len) {
 
   kef_decrypt_page_destroy();
   storage_browser_hide();
-  descriptor_loader_process_string(descriptor_str, descriptor_validation_cb,
-                                   NULL);
-  free(descriptor_str);
+
+  free(pending_kef_descriptor);
+  pending_kef_descriptor = descriptor_str;
+  descriptor_str = NULL;
+
+  descriptor_loader_process_string(pending_kef_descriptor,
+                                   descriptor_validation_cb, (void *)1);
 }
 
 /* ---------- Load selected entry ---------- */
@@ -67,14 +85,14 @@ static void load_selected(int idx, const char *filename) {
   esp_err_t ret = storage_load_descriptor(
       storage_browser_get_location(), filename, &data, &data_len, &encrypted);
   if (ret != ESP_OK) {
-    dialog_show_error("Failed to load file", NULL, 0);
+    dialog_show_error_timeout("Failed to load file", NULL, 0);
     return;
   }
 
   if (encrypted) {
     if (!kef_is_envelope(data, data_len)) {
       free(data);
-      dialog_show_error("Invalid encrypted data", NULL, 0);
+      dialog_show_error_timeout("Invalid encrypted data", NULL, 0);
       return;
     }
 
@@ -82,13 +100,14 @@ static void load_selected(int idx, const char *filename) {
     kef_decrypt_page_create(lv_screen_active(), return_from_kef_decrypt,
                             success_from_kef_decrypt, data, data_len);
     kef_decrypt_page_show();
+
     free(data); /* kef_decrypt_page copies it */
   } else {
     /* Plaintext: null-terminate and process directly */
     char *descriptor_str = malloc(data_len + 1);
     if (!descriptor_str) {
       free(data);
-      dialog_show_error("Out of memory", NULL, 0);
+      dialog_show_error_timeout("Out of memory", NULL, 0);
       return;
     }
     memcpy(descriptor_str, data, data_len);

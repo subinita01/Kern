@@ -3,7 +3,7 @@
 #include "dice_rolls.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include <lvgl.h>
 #include <stdlib.h>
@@ -274,7 +274,7 @@ static bool generate_mnemonic_from_rolls(void) {
 
 static void finish_dice_rolls(void) {
   if (!generate_mnemonic_from_rolls()) {
-    dialog_show_error("Failed to generate mnemonic", NULL, 0);
+    dialog_show_error_timeout("Failed to generate mnemonic", NULL, 0);
     return;
   }
 

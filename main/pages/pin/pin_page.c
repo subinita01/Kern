@@ -8,7 +8,7 @@
 #include "../../core/pin.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 
 #include <esp_system.h>
@@ -212,7 +212,7 @@ static void create_content_area(void) {
   lv_obj_set_flex_flow(content_area, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content_area, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(content_area, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(content_area, theme_default_padding(), 0);
   lv_obj_set_style_pad_gap(content_area, 8, 0);
 }
 
@@ -270,7 +270,7 @@ static void deferred_verify_cb(lv_timer_t *timer) {
     break;
   case PIN_VERIFY_WIPED: {
     clear_buffers();
-    dialog_show_error("Device wiped. All data erased.", NULL, 0);
+    dialog_show_error_timeout("Device wiped. All data erased.", NULL, 0);
     lv_timer_t *rt = lv_timer_create(restart_cb, 3000, NULL);
     lv_timer_set_repeat_count(rt, 1);
     break;
@@ -279,7 +279,7 @@ static void deferred_verify_cb(lv_timer_t *timer) {
     clear_buffers();
     // Defer the rebuild until the dialog dismisses; rebuilding now would
     // add the new keyboard above the error modal and hide the message.
-    dialog_show_error("Wrong PIN", wrong_pin_dismissed_cb, 1500);
+    dialog_show_error_timeout("Wrong PIN", wrong_pin_dismissed_cb, 1500);
     break;
   }
 }
@@ -316,7 +316,8 @@ static void input_ready_cb(lv_event_t *e) {
 
   case STATE_SETUP_FULL_PIN: {
     if (len < PIN_MIN_LENGTH) {
-      dialog_show_error("PIN must be at least 6 characters", NULL, 1500);
+      dialog_show_error_timeout("PIN must be at least 6 characters", NULL,
+                                1500);
       return;
     }
     memcpy(setup_pin, text, len);
@@ -334,7 +335,8 @@ static void input_ready_cb(lv_event_t *e) {
       secure_clear_textarea(text_input.textarea);
       // Defer the rebuild until the dialog dismisses; rebuilding now would
       // add the new keyboard above the error modal and hide the message.
-      dialog_show_error("PINs don't match", pin_mismatch_dismissed_cb, 1500);
+      dialog_show_error_timeout("PINs don't match", pin_mismatch_dismissed_cb,
+                                1500);
       return;
     }
     secure_clear_textarea(text_input.textarea);
@@ -495,7 +497,7 @@ static void pin_keystroke_cb(lv_event_t *e) {
 #ifdef CONFIG_KERN_BOARD_WAVE_35
         if (!continue_btn) {
           continue_btn = theme_create_button(page_screen, "Continue", true);
-          lv_obj_set_size(continue_btn, LV_PCT(60), theme_get_button_height());
+          lv_obj_set_size(continue_btn, LV_PCT(60), theme_button_height());
           lv_obj_align(continue_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
           lv_obj_add_event_cb(continue_btn, continue_btn_cb, LV_EVENT_CLICKED,
                               NULL);
@@ -647,7 +649,8 @@ static void deferred_pin_save(lv_timer_t *timer) {
   clear_buffers();
   dismiss_processing();
   if (err != ESP_OK) {
-    dialog_show_error("Failed to save PIN. Please try again.", NULL, 2000);
+    dialog_show_error_timeout("Failed to save PIN. Please try again.", NULL,
+                              2000);
     transition_to(STATE_SETUP_FULL_PIN);
     return;
   }
@@ -695,8 +698,8 @@ static void build_split_state(void) {
   lv_obj_set_flex_grow(split_display_label, 1);
 
   split_eye_btn = lv_btn_create(display_row);
-  lv_obj_set_size(split_eye_btn, theme_get_min_touch_size(),
-                  theme_get_min_touch_size());
+  lv_obj_set_size(split_eye_btn, theme_min_touch_size(),
+                  theme_min_touch_size());
   lv_obj_set_style_bg_opa(split_eye_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_width(split_eye_btn, 0, 0);
   lv_obj_set_style_border_width(split_eye_btn, 0, 0);
@@ -715,18 +718,16 @@ static void build_split_state(void) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   left_btn = theme_create_button(btn_row, LV_SYMBOL_LEFT, false);
-  lv_obj_set_size(left_btn, theme_get_button_width(),
-                  theme_get_button_height());
+  lv_obj_set_size(left_btn, theme_button_width(), theme_button_height());
   lv_obj_add_event_cb(left_btn, split_left_cb, LV_EVENT_CLICKED, NULL);
 
   right_btn = theme_create_button(btn_row, LV_SYMBOL_RIGHT, false);
-  lv_obj_set_size(right_btn, theme_get_button_width(),
-                  theme_get_button_height());
+  lv_obj_set_size(right_btn, theme_button_width(), theme_button_height());
   lv_obj_add_event_cb(right_btn, split_right_cb, LV_EVENT_CLICKED, NULL);
 
   // Confirm button
   lv_obj_t *confirm = theme_create_button(content_area, "Confirm", true);
-  lv_obj_set_size(confirm, LV_PCT(60), theme_get_button_height());
+  lv_obj_set_size(confirm, LV_PCT(60), theme_button_height());
   lv_obj_add_event_cb(confirm, split_confirm_cb, LV_EVENT_CLICKED, NULL);
 
   update_split_display();
@@ -746,9 +747,9 @@ static void efuse_confirm_result(bool confirmed, void *user_data) {
       lv_obj_delete(progress);
 
     if (err != ESP_OK) {
-      dialog_show_error("eFuse provisioning failed. "
-                        "Anti-phishing will be unavailable.",
-                        NULL, 3000);
+      dialog_show_error_timeout("eFuse provisioning failed. "
+                                "Anti-phishing will be unavailable.",
+                                NULL, 3000);
     }
   }
 
@@ -845,7 +846,7 @@ static void build_setup_words_deferred(lv_timer_t *timer) {
 
   // Continue button — let user read words before confirming
   lv_obj_t *btn = theme_create_button(content_area, "Continue", true);
-  lv_obj_set_size(btn, LV_PCT(60), theme_get_button_height());
+  lv_obj_set_size(btn, LV_PCT(60), theme_button_height());
   lv_obj_add_event_cb(btn, setup_words_continue_cb, LV_EVENT_CLICKED, NULL);
 }
 
@@ -905,7 +906,7 @@ static void build_delay_state(void) {
            (unsigned long)delay_remaining_sec);
   lv_label_set_text(delay_label, buf);
   lv_obj_set_style_text_font(delay_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(delay_label, main_color(), 0);
+  lv_obj_set_style_text_color(delay_label, primary_color(), 0);
   lv_obj_set_style_text_align(delay_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(delay_label, LV_PCT(100));
 

@@ -128,7 +128,9 @@ set(APP_UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/ui)
 set(SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
+    ${APP_UI_DIR}/font_policy.c
     ${APP_UI_DIR}/theme.c
+    ${APP_UI_DIR}/theme_widgets.c
     ${APP_UI_DIR}/assets/kern_logo_lvgl.c
     ${APP_UI_DIR}/assets/kern_logo_font.c
     ${APP_UI_DIR}/assets/icons_16.c
@@ -139,30 +141,36 @@ set(SIM_SOURCES
 # --- ESP-IDF stubs (NVS, FreeRTOS, eFuse, storage) ---
 set(STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/nvs_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_storage_hooks.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/efuse_hmac_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/freertos_sim.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_stub.c
 )
 
 # --- Application utilities ---
 set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
 )
 
 # --- Core application modules ---
 set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/session.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/error.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/key.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/message_sign.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
     # miniz (used by kef.c for raw-deflate compression)
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
     # bbqr (multi-part QR encoding)
@@ -176,11 +184,14 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/input_helpers.c
     ${APP_UI_DIR}/keyboard.c
     ${APP_UI_DIR}/menu.c
-    ${APP_UI_DIR}/nav.c
+    ${APP_UI_DIR}/numeric_keypad.c
+    ${APP_UI_DIR}/power.c
     ${APP_UI_DIR}/word_selector.c
+    ${APP_UI_DIR}/wallet_source_picker.c
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
     ${APP_UI_DIR}/sankey.c
+    ${APP_UI_DIR}/settings_row.c
 )
 
 # --- PIN pages ---
@@ -251,6 +262,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/new_mnemonic/entropy_from_camera.c
     # Home
     ${APP_PAGES_DIR}/home/home.c
+    ${APP_PAGES_DIR}/home/advanced_tools.c
+    ${APP_PAGES_DIR}/home/bip85.c
     ${APP_PAGES_DIR}/home/addresses.c
     ${APP_PAGES_DIR}/home/public_key.c
     ${APP_PAGES_DIR}/home/backup/backup_menu.c
@@ -259,6 +272,7 @@ set(APP_PAGE_SOURCES
     # Settings
     ${APP_PAGES_DIR}/settings/descriptor_manager.c
     ${APP_PAGES_DIR}/settings/wallet_settings.c
+    ${APP_PAGES_DIR}/settings/registered_descriptors.c
     # Shared pages
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
@@ -277,6 +291,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/store_mnemonic.c
     # Scan page
     ${APP_PAGES_DIR}/scan/scan.c
+    ${APP_PAGES_DIR}/scan/psbt_sign_policy.c
     # Dev tools
     ${APP_PAGES_DIR}/dev_tools/dev_menu.c
     ${APP_PAGES_DIR}/dev_tools/snapshot.c
@@ -364,6 +379,8 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},wave_4b>:CONFIG_KERN_BOARD_WAVE_4B=1>
     $<$<STREQUAL:${SIM_BOARD},wave_35>:CONFIG_KERN_BOARD_WAVE_35=1>
     $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
+    $<$<STREQUAL:${SIM_BOARD},wave_43>:CONFIG_KERN_BOARD_WAVE_43=1>
+    $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
 )
 
 target_compile_options(kern_simulator PRIVATE
@@ -405,3 +422,47 @@ target_link_libraries(kern_simulator PRIVATE
     ${MBEDX509_LIB}
     $<$<BOOL:${SIM_WEBCAM}>:v4l2_capture>
 )
+
+add_executable(kern_sim_storage_smoke
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage_smoke.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_storage_hooks.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/sd_card_sim.c
+)
+
+target_include_directories(kern_sim_storage_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${MBEDTLS_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src
+)
+
+target_compile_definitions(kern_sim_storage_smoke PRIVATE
+    SIMULATOR=1
+)
+
+target_compile_options(kern_sim_storage_smoke PRIVATE
+    -Wall -Wextra
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -include mbedtls_compat.h
+)
+
+target_link_libraries(kern_sim_storage_smoke PRIVATE
+    m
+    ${MBEDTLS_LIB}
+    ${MBEDCRYPTO_LIB}
+    ${MBEDX509_LIB}
+)
+
+enable_testing()
+add_test(NAME storage_smoke COMMAND kern_sim_storage_smoke)

@@ -4,7 +4,7 @@
 #include "../../core/storage.h"
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "wipe_flash_dialog.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -100,7 +100,7 @@ static void inline_delete_refresh_cb(void *user_data) {
     char msg[64];
     snprintf(msg, sizeof(msg), "No %ss found on %s", cfg.item_type_name,
              loc_name);
-    dialog_show_error(msg, back_cb, 0);
+    dialog_show_error_timeout(msg, back_cb, 0);
     return;
   }
 
@@ -134,7 +134,7 @@ static void inline_delete_confirm_cb(bool confirmed, void *user_data) {
                        DIALOG_STYLE_OVERLAY);
     }
   } else {
-    dialog_show_error("Failed to delete", NULL, 0);
+    dialog_show_error_timeout("Failed to delete", NULL, 0);
   }
 }
 
@@ -173,9 +173,8 @@ static void build_menu(void) {
 
   if (cfg.location == STORAGE_FLASH) {
     ui_menu_add_entry(browser_menu, "Wipe Flash", wipe_flash_cb);
-    int wipe_idx = browser_menu->config.entry_count - 1;
-    lv_obj_t *wipe_label = lv_obj_get_child(browser_menu->buttons[wipe_idx], 0);
-    lv_obj_set_style_text_color(wipe_label, error_color(), 0);
+    int wipe_idx = ui_menu_get_entry_count(browser_menu) - 1;
+    ui_menu_set_entry_text_color(browser_menu, wipe_idx, error_color());
   }
 
   ui_menu_show(browser_menu);
@@ -203,7 +202,7 @@ static void deferred_list_cb(lv_timer_t *timer) {
     char msg[64];
     snprintf(msg, sizeof(msg), "No %ss found on %s", cfg.item_type_name,
              loc_name);
-    dialog_show_error(msg, back_cb, 0);
+    dialog_show_error_timeout(msg, back_cb, 0);
     return;
   }
 
@@ -224,7 +223,7 @@ void storage_browser_create(lv_obj_t *parent,
   loading_label = lv_label_create(browser_screen);
   lv_label_set_text(loading_label, "Preparing storage...");
   lv_obj_set_style_text_font(loading_label, theme_font_small(), 0);
-  lv_obj_set_style_text_color(loading_label, main_color(), 0);
+  lv_obj_set_style_text_color(loading_label, primary_color(), 0);
   lv_obj_align(loading_label, LV_ALIGN_CENTER, 0, 0);
 
   init_timer = lv_timer_create(deferred_list_cb, 50, NULL);

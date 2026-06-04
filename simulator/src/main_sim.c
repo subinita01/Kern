@@ -12,16 +12,17 @@
 #include "ui/assets/kern_logo_lvgl.h"
 #include "core/settings.h"
 #include "core/pin.h"
-#include "core/session.h"
+#include "utils/session.h"
 #include "pages/pin/pin_page.h"
 #include "pages/login/login.h"
-#include "ui/nav.h"
 #include "esp_lvgl_port.h"
 #include "utils/bip39_filter.h"
 #include <wally_core.h>
 #include <nvs_flash.h>
 #include <esp_err.h>
 #include "sim_video.h"
+#include "video/video.h"
+#include "sim_flash.h"
 #include "sim_nvs.h"
 #include "sim_sdcard.h"
 #include <bsp/pmic.h>
@@ -76,7 +77,6 @@ static void post_unlock_cb(void) {
     /* Show login page (wallet selector / main menu) */
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
-    nav_init(scr);
     login_page_create(scr);
 }
 
@@ -93,7 +93,6 @@ static void splash_done_cb(lv_timer_t *t) {
     if (pin_is_configured()) {
         pin_page_create(scr, PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
     } else {
-        nav_init(scr);
         login_page_create(scr);
     }
 }
@@ -161,9 +160,14 @@ int main(int argc, char *argv[]) {
                 break;
             case 'd': {
                 char nvs_path[512];
+                char flash_path[512];
+                char sdcard_path[512];
                 snprintf(nvs_path, sizeof(nvs_path), "%s/nvs", optarg);
+                snprintf(flash_path, sizeof(flash_path), "%s/spiffs", optarg);
+                snprintf(sdcard_path, sizeof(sdcard_path), "%s/sdcard", optarg);
                 sim_nvs_set_data_dir(nvs_path);
-                sim_sdcard_set_data_dir(optarg);
+                sim_flash_set_data_dir(flash_path);
+                sim_sdcard_set_data_dir(sdcard_path);
                 break;
             }
             case 'W':
@@ -242,6 +246,12 @@ int main(int argc, char *argv[]) {
 
     /* Initialize PMIC (simulated battery on wave_35; no-op on wave_4b) */
     bsp_pmic_init();
+
+    esp_err_t video_ret = app_video_init_once(NULL);
+    if (video_ret != ESP_OK) {
+        ESP_LOGW("SIM_MAIN", "Video pipeline init failed: %s",
+                 esp_err_to_name(video_ret));
+    }
 
     /* -----------------------------------------------------------------------
      * Show animated Kern logo splash screen

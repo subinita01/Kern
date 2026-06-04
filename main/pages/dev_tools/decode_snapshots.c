@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 
 static const char *TAG = "decode_snapshots";
 
@@ -426,7 +426,7 @@ void decode_snapshots_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   /* Navigation counter */
   nav_label = theme_create_label(page_screen, "", true);
-  lv_obj_align(nav_label, LV_ALIGN_TOP_RIGHT, -10, theme_get_default_padding());
+  lv_obj_align(nav_label, LV_ALIGN_TOP_RIGHT, -10, theme_default_padding());
 
   /* Original image (left) */
   original_img = lv_img_create(page_screen);

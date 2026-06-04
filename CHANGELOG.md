@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.0.10] - 2026-05-30
+
+### Added
+- Login screen branding: pulsing logo, dice icon, and an About info button in the top-right corner
+- Menu items can carry an icon
+- CrowPanel 10.1 case
+
+### Changed
+- Landscape layouts for square devices, menus, and the public key page (2x2 grid)
+- Harmonized page titles, corner buttons, two-tier buttons, and theme-based dialog spacing
+- Danger dialogs use a warning icon and semantic colours
+- Bumped libwally-core to 1.5.3
+
+### Fixed
+- Taproot PSBTs: testnet is detected correctly (no longer misread as mainnet) and change/self-transfer outputs are recognized instead of being treated as spends
+- Theme paddings and button widths scale to the smallest screen dimension
+- Mnemonic word-grid and battery icon alignment
+- About page logo/QR sizing in landscape
+
+## [0.0.9] - 2026-05-23
+
+### Fixed
+- Camera: recover from a stop timeout instead of leaking the stream task, which left the scanner unable to start after entropy capture (wave_35)
+
+## [0.0.8] - 2026-05-22
+
+### Added
+- Support for CrowPanel 10.1 (ESP32-P4 board, EK79007 panel, GT911 touch)
+- Web flasher deployment with CrowPanel 10.1 included
+- Simulator now uses production storage with a file-backed SPIFFS shim
+- Optional 4-bit custom GPIO routing for SD card (D1/D2/D3 Kconfig); defaults preserve the SDMMC IOMUX fast path
+- Camera: SC2336 image sensor auto-detected alongside OV5647 (some CrowPanel modules ship with SC2336)
+- Advanced Tools menu with BIP85 → BIP39 child mnemonic derivation (12/24 words, configurable child index)
+
+
+### Fixed
+- wave_4b: use internal LVGL draw buffer to avoid DMA2D copy window overlapping LCD draws
+- Addresses page: align cropped address rows
+- Scan: preserve address tip highlighting across wraps
+- Scan: show network-mismatch error for cross-network addresses
+- Scan: suppress QR format error on cancel
+- Camera: show error and bail when camera unavailable
+- Public key page layout
+- Mnemonic QR layout on portrait devices
+
+## [0.0.7] - 2026-05-15
+
+### Added
+- Descriptors can be loaded into the current session and used for PSBT/address matching; explicit flash/SD save/load remains available for backups.
+- Session descriptor actions are now descriptor-scoped: view, export QR, save to flash/SD, or remove from session after selecting the descriptor.
+- Permissive signing mode (opt-in in settings): allows signing PSBTs whose key paths are not matched by any loaded session descriptor.
+- PSBT review now shows signing policy, per-source input totals, and highlights external inputs in the Sankey diagram.
+- Public key export now supports script type and account selection, plus BIP48 multisig cosigner xpub export.
+- Support for Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 (wave_43, 480x800 MIPI DSI, ST7701)
+- Simulator webcam capture is available on macOS and Linux.
+
+### Changed
+- Removed the policy-selection step from the signing flow. Any BIP-44/49/84/86 account that matches a whitelisted descriptor is accepted directly.
+- Account derivation is now inferred from the PSBT key path rather than a manual user setting. Existing PSBTs continue to sign correctly.
+- Descriptor registration is disabled until encrypted descriptor backups are available; loaded descriptors are session-only, while explicit flash/SD storage remains a backup/import feature.
+- Session descriptor details now use a full-screen viewer for long descriptor text instead of a modal dialog.
+- Battery status is shown with icon glyphs instead of text percentages.
+- Updated project target to ESP-IDF v6.0.1.
+
+### Fixed
+- Descriptor duplicate detection catches equivalent QR/storage loads that differ only by checksum or hardened-path notation.
+- Descriptor loads with the wrong network now report a network mismatch instead of a generic parse error.
+- Encrypted descriptor backups loaded from storage return cleanly after confirmation.
+- Wallet settings apply network and passphrase changes immediately.
+- Address and PSBT review controls fit better on narrow screens, including wrapped policy chips and scaled Sankey diagrams.
+- Avoid VFS slot exhaustion when reinitializing camera/storage paths.
+
+### Migration notes
+- Devices upgrading in-place have their legacy `def_pol` NVS key (the old default-wallet-policy setting) automatically erased on first boot. No user action required.
+
 ## [0.0.6] - 2026-04-25
 
 ### Changed

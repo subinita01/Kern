@@ -90,7 +90,7 @@ for core ESP32 APIs.
 | `esp_timer_get_time()`         | `CLOCK_MONOTONIC` in usec         |
 | `esp_timer_create/start/`      | Allocates timer struct;           |
 | `stop/delete()`                | callbacks never fire              |
-| `esp_vfs_spiffs_register()`    | Creates dir at `conf->base_path`  |
+| `esp_vfs_spiffs_register()`    | Mounts `sim_data/spiffs` shim     |
 | `esp_app_get_description()`    | Version "sim-dev",                |
 |                                | project "kern_simulator"          |
 | `ppa_do_scale_rotate_mirror()` | Simple `memcpy()` (no transform)  |
@@ -164,18 +164,33 @@ Placeholder stubs for BIP39 word filtering:
   (all 26 letters valid)
 - Word matching functions return 0 / empty
 
-#### storage_stub.c
+#### sim_flash.c - Flash / SPIFFS
 
-Placeholder for secure storage APIs. All operations return
-`ESP_ERR_NOT_SUPPORTED` except `storage_init()` and
-`storage_wipe_flash()`.
+File-backed SPIFFS partition used by the production storage
+module (`main/core/storage.c`). Firmware paths under `/spiffs`
+are rewritten to the simulator data directory.
+
+**Runtime layout:**
+```
+sim_data/spiffs/
+├── m_<id>.kef
+├── d_<id>.kef
+└── d_<id>.txt
+```
+
+**API:** `esp_vfs_spiffs_register()`,
+`esp_vfs_spiffs_unregister()`, `esp_spiffs_check()`,
+`esp_partition_find_first()`, and `esp_partition_erase_range()`.
+
+**Control:** `sim_flash_set_data_dir(path)` overrides the
+default `sim_data/spiffs` directory.
 
 ---
 
 ### sd_card_sim/ - SD Card Simulator
 
-Maps the SD card API to POSIX filesystem operations under
-`sim_data/sdcard/`.
+Maps firmware `/sdcard` paths to POSIX filesystem operations
+under `sim_data/sdcard/`.
 
 **Auto-created on init:**
 ```
@@ -196,8 +211,8 @@ sim_data/sdcard/kern/descriptors/
 | `sd_card_free_file_list()` | Frees allocated filename array    |
 
 **Control:** `sim_sdcard_set_data_dir(dir)` overrides the
-root directory. Paths starting with `SD_CARD_MOUNT_POINT`
-are rewritten to use the override.
+root directory. Paths starting with `/sdcard` are rewritten to
+use the simulator root.
 
 ---
 
@@ -216,14 +231,11 @@ disk and delivering RGB565 frames via a callback at ~30 fps.
 **Frame delivery:**
 - Background pthread delivers frames every ~33 ms
 - Calls `s_frame_cb(buffer, 0, width, height, frame_size)`
-- Supports up to 4 user-provided frame buffers
 
 **Application API** (matches real camera driver):
-- `app_video_open()` - Loads QR image, returns fake fd=42
-- `app_video_stream_task_start()` - Starts delivery thread
-- `app_video_stream_task_stop()` - Joins thread
-- `app_video_register_frame_operation_cb()` - Registers
-  frame callback
+- `app_video_init_once()` - Initializes the persistent fake camera
+- `app_video_start()` - Registers frame callback and starts delivery thread
+- `app_video_stop()` - Joins thread but keeps camera state initialized
 - `app_video_get_resolution()` /
   `app_video_get_buf_size()` - Frame metadata
 - Focus/AE/AF functions are no-ops

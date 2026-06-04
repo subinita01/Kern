@@ -5,7 +5,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/keyboard.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/bip39_filter.h"
 #include "../shared/mnemonic_editor.h"
@@ -346,7 +346,7 @@ void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
   checksum_filter_mode = checksum_filter_last_word;
 
   if (!bip39_filter_init()) {
-    dialog_show_error("Failed to load wordlist", return_cb, 0);
+    dialog_show_error_timeout("Failed to load wordlist", return_cb, 0);
     return;
   }
 

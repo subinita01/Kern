@@ -3,8 +3,9 @@
 #include "scanner.h"
 #include "../components/cUR/src/ur_decoder.h"
 #include "../core/settings.h"
+#include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
-#include "../ui/theme.h"
+#include "../ui/theme_widgets.h"
 #include "../utils/memory_utils.h"
 #include "parser.h"
 #include <bsp/esp-bsp.h>
@@ -88,9 +89,7 @@ static lv_obj_t *ur_progress_indicator = NULL;
 static int ur_progress_bar_inner_width = 0;
 static void (*return_callback)(void) = NULL;
 
-static int camera_ctlr_handle = -1;
 static lv_img_dsc_t img_refresh_dsc;
-static bool video_system_initialized = false;
 static EventGroupHandle_t camera_event_group = NULL;
 
 static uint8_t *display_buffer_a = NULL;
@@ -119,6 +118,7 @@ static lv_obj_t *settings_overlay = NULL;
 static lv_obj_t *ae_slider = NULL;
 static lv_obj_t *focus_slider = NULL;
 static bool has_focus_motor = false;
+static bool has_ae_control = false;
 static volatile bool settings_active = false;
 
 // PPA does centered crop + downscale (1280x960 -> 640x640) in a single pass.
@@ -156,7 +156,7 @@ static void qr_decode_task(void *pvParameters);
 static bool qr_decoder_init(uint32_t width, uint32_t height);
 static void qr_decoder_cleanup(void);
 static bool camera_run(void);
-static void camera_init(void);
+static bool camera_init(void);
 static void create_progress_indicators(int total_parts);
 static void update_progress_indicator(int part_index);
 static void cleanup_progress_indicators(void);
@@ -279,7 +279,7 @@ static void update_progress_indicator(int part_index) {
                               highlight_color(), 0);
     if (previously_parsed >= 0) {
       lv_obj_set_style_bg_color(progress_rectangles[previously_parsed],
-                                main_color(), 0);
+                                primary_color(), 0);
     }
     previously_parsed = part_index;
     bsp_display_unlock();
@@ -386,12 +386,12 @@ static void destroy_settings_overlay(void) {
 
 static void ae_slider_cb(lv_event_t *e) {
   int32_t val = lv_slider_get_value(lv_event_get_target(e));
-  app_video_set_ae_target(camera_ctlr_handle, (uint32_t)val);
+  app_video_set_ae_target((uint32_t)val);
 }
 
 static void focus_slider_cb(lv_event_t *e) {
   int32_t val = lv_slider_get_value(lv_event_get_target(e));
-  app_video_set_focus(camera_ctlr_handle, (uint32_t)(FOCUS_POSITION_MAX - val));
+  app_video_set_focus((uint32_t)(FOCUS_POSITION_MAX - val));
 }
 
 static void settings_close_cb(lv_event_t *e) { destroy_settings_overlay(); }
@@ -435,17 +435,19 @@ static void create_settings_overlay(void) {
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
-  // Exposure label + slider
-  lv_obj_t *ae_title = lv_label_create(panel);
-  lv_label_set_text(ae_title, "Exposure");
-  lv_obj_set_style_text_font(ae_title, theme_font_small(), 0);
-  lv_obj_set_style_text_color(ae_title, main_color(), 0);
+  // Exposure label + slider (only when sensor exposes AE control)
+  if (has_ae_control) {
+    lv_obj_t *ae_title = lv_label_create(panel);
+    lv_label_set_text(ae_title, "Exposure");
+    lv_obj_set_style_text_font(ae_title, theme_font_small(), 0);
+    lv_obj_set_style_text_color(ae_title, primary_color(), 0);
 
-  ae_slider = lv_slider_create(panel);
-  lv_slider_set_range(ae_slider, AE_TARGET_MIN, AE_TARGET_MAX);
-  lv_slider_set_value(ae_slider, settings_get_ae_target(), LV_ANIM_OFF);
-  style_settings_slider(ae_slider);
-  lv_obj_add_event_cb(ae_slider, ae_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    ae_slider = lv_slider_create(panel);
+    lv_slider_set_range(ae_slider, AE_TARGET_MIN, AE_TARGET_MAX);
+    lv_slider_set_value(ae_slider, settings_get_ae_target(), LV_ANIM_OFF);
+    style_settings_slider(ae_slider);
+    lv_obj_add_event_cb(ae_slider, ae_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+  }
 
   // Focus label + slider (only if motor detected, inverted: left=near
   // right=far)
@@ -453,7 +455,7 @@ static void create_settings_overlay(void) {
     lv_obj_t *focus_title = lv_label_create(panel);
     lv_label_set_text(focus_title, "Focus");
     lv_obj_set_style_text_font(focus_title, theme_font_small(), 0);
-    lv_obj_set_style_text_color(focus_title, main_color(), 0);
+    lv_obj_set_style_text_color(focus_title, primary_color(), 0);
 
     focus_slider = lv_slider_create(panel);
     lv_slider_set_range(focus_slider, 0, FOCUS_POSITION_MAX);
@@ -694,10 +696,15 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
     goto error;
   }
 
-  // Pin decode task to Core 1 to avoid competing with camera task on Core 0
-  BaseType_t task_result = xTaskCreatePinnedToCore(
+  // Pin decode task to Core 1 to avoid competing with camera task on Core 0.
+  // Stack lives in PSRAM: the ISP pipeline controller (when enabled on
+  // crowpanel) holds enough internal DRAM for its task + IPA algorithm
+  // state that a 32 KB internal-DRAM stack here fails to allocate. The decode
+  // task never writes flash/NVS, so the SPI-cache-disabled caveat for PSRAM
+  // stacks does not apply.
+  BaseType_t task_result = xTaskCreatePinnedToCoreWithCaps(
       qr_decode_task, "qr_decode", QR_DECODE_TASK_STACK_SIZE, NULL,
-      QR_DECODE_TASK_PRIORITY, &qr_decode_task_handle, 1);
+      QR_DECODE_TASK_PRIORITY, &qr_decode_task_handle, 1, MALLOC_CAP_SPIRAM);
   if (task_result != pdPASS) {
     ESP_LOGE(TAG, "Failed to create QR decode task");
     goto error;
@@ -716,7 +723,7 @@ error:
     qr_parser = NULL;
   }
   if (qr_decode_task_handle) {
-    vTaskDelete(qr_decode_task_handle);
+    vTaskDeleteWithCaps(qr_decode_task_handle);
     qr_decode_task_handle = NULL;
   }
   if (qr_task_done_sem) {
@@ -740,7 +747,7 @@ static void qr_decoder_cleanup(void) {
   if (qr_decode_task_handle && qr_task_done_sem) {
     if (xSemaphoreTake(qr_task_done_sem, pdMS_TO_TICKS(500)) != pdTRUE)
       ESP_LOGW(TAG, "Timeout waiting for QR decode task");
-    vTaskDelete(qr_decode_task_handle);
+    vTaskDeleteWithCaps(qr_decode_task_handle);
     qr_decode_task_handle = NULL;
   }
 
@@ -828,10 +835,12 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   if (cam_ppa_client && !closing) {
     uint32_t in_w = camera_buf_hes;
     uint32_t in_h = camera_buf_ves;
-    uint32_t crop = (in_w < in_h) ? in_w : in_h;
-    if (crop > CAMERA_INPUT_CROP) {
-      crop = CAMERA_INPUT_CROP;
-    }
+    uint32_t crop_max = (in_w < in_h) ? in_w : in_h;
+    if (crop_max > CAMERA_INPUT_CROP)
+      crop_max = CAMERA_INPUT_CROP;
+    // Snap crop so PPA's Q4.4 scale produces exactly CAMERA_SCREEN_WIDTH;
+    // otherwise the truncated scale leaves a noisy column on the right edge.
+    uint32_t crop = app_video_ppa_snap_crop(crop_max, CAMERA_SCREEN_WIDTH);
     uint32_t crop_ox = (in_w - crop) / 2;
     uint32_t crop_oy = (in_h - crop) / 2;
     float sim_scale = (float)CAMERA_SCREEN_WIDTH / (float)crop;
@@ -874,7 +883,6 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
       current_display_buffer = back_buffer;
       img_refresh_dsc.data = display_src;
       lv_img_set_src(camera_img, &img_refresh_dsc);
-      lv_refr_now(NULL);
     }
     buffer_swap_needed = false;
     bsp_display_unlock();
@@ -895,47 +903,22 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
 }
 
-static void camera_init(void) {
-  if (video_system_initialized) {
-    return;
+static bool camera_init(void) {
+  if (app_video_is_streaming())
+    return true;
+
+  if (!app_video_is_ready()) {
+    ESP_LOGE(TAG, "Video pipeline is not ready");
+    return false;
   }
 
   camera_event_group = xEventGroupCreate();
   if (!camera_event_group) {
     ESP_LOGE(TAG, "Failed to create camera event group");
-    return;
+    return false;
   }
 
   xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
-
-  i2c_master_bus_handle_t i2c_handle = bsp_i2c_get_handle();
-  if (!i2c_handle) {
-    ESP_LOGE(TAG, "Failed to get I2C bus handle");
-    return;
-  }
-
-  esp_err_t err = app_video_main(i2c_handle);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to initialize camera: %s", esp_err_to_name(err));
-    return;
-  }
-
-  video_system_initialized = true;
-
-  camera_ctlr_handle = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT_RGB565);
-  if (camera_ctlr_handle < 0) {
-    ESP_LOGE(TAG, "Failed to open camera device");
-    return;
-  }
-
-#if BSP_CAM_HAS_MOTOR
-  has_focus_motor = app_video_has_focus_motor(camera_ctlr_handle);
-#else
-  has_focus_motor = false;
-#endif
-
-  ESP_ERROR_CHECK(
-      app_video_register_frame_operation_cb(camera_video_frame_operation));
 
   img_refresh_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
@@ -947,27 +930,11 @@ static void camera_init(void) {
 
   if (!allocate_display_buffers(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
     ESP_LOGE(TAG, "Failed to allocate display buffers");
-    return;
+    return false;
   }
 
   current_display_buffer = display_buffer_a;
   img_refresh_dsc.data = current_display_buffer;
-
-  ESP_ERROR_CHECK(app_video_set_bufs(camera_ctlr_handle, CAM_BUF_NUM, NULL));
-
-  esp_err_t start_err = app_video_stream_task_start(camera_ctlr_handle, 0);
-  if (start_err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start camera stream task: %s",
-             esp_err_to_name(start_err));
-    return;
-  }
-
-  // Apply camera settings after stream starts (V4L2 controls register with the
-  // sensor device only once streaming).
-  app_video_set_ae_target(camera_ctlr_handle, settings_get_ae_target());
-  if (has_focus_motor) {
-    app_video_set_focus(camera_ctlr_handle, settings_get_focus_position());
-  }
 
   if (!qr_decoder_init(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
     ESP_LOGE(TAG, "Failed to initialize QR decoder");
@@ -979,12 +946,29 @@ static void camera_init(void) {
     ESP_LOGE(TAG, "Failed to register PPA client for camera scaler");
     cam_ppa_client = NULL;
   }
+
+  esp_err_t start_err = app_video_start(camera_video_frame_operation, 0);
+  if (start_err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start camera stream task: %s",
+             esp_err_to_name(start_err));
+    return false;
+  }
+
+  // Apply camera settings after stream starts (V4L2 controls register with the
+  // sensor device only once streaming).
+  if (has_ae_control) {
+    app_video_set_ae_target(settings_get_ae_target());
+  }
+  if (has_focus_motor) {
+    app_video_set_focus(settings_get_focus_position());
+  }
+
+  return true;
 }
 
 static bool camera_run(void) {
-  if (camera_ctlr_handle < 0 || !video_system_initialized) {
-    camera_init();
-  }
+  if (!app_video_is_streaming())
+    return camera_init();
   return true;
 }
 
@@ -996,6 +980,16 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   scan_completed = false;
   is_fully_initialized = false;
   active_frame_operations = 0;
+
+  if (!app_video_is_ready()) {
+    dialog_show_error_timeout("Camera not available", return_callback, 0);
+    return;
+  }
+
+  // Probe sensor capabilities up front so we can gate the settings button
+  // before camera_init() runs (which only happens later, inside camera_run()).
+  has_focus_motor = app_video_has_focus_motor();
+  has_ae_control = app_video_has_ae_control();
 
   qr_scanner_screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(qr_scanner_screen, LV_PCT(100), LV_PCT(100));
@@ -1031,10 +1025,12 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_label(title_label, true);
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 8);
 
-  lv_obj_t *settings_btn =
-      ui_create_settings_button(qr_scanner_screen, settings_btn_cb);
-  lv_obj_set_style_bg_opa(settings_btn, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(settings_btn, bg_color(), 0);
+  if (has_ae_control || has_focus_motor) {
+    lv_obj_t *settings_btn =
+        ui_create_settings_button(qr_scanner_screen, settings_btn_cb);
+    lv_obj_set_style_bg_opa(settings_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(settings_btn, bg_color(), 0);
+  }
 
 #ifdef QR_PERF_DEBUG
   fps_label = lv_label_create(qr_scanner_screen);
@@ -1072,6 +1068,7 @@ void qr_scanner_page_destroy(void) {
   is_fully_initialized = false;
   destroy_settings_overlay();
   has_focus_motor = false;
+  has_ae_control = false;
 
   if (completion_timer) {
     lv_timer_del(completion_timer);
@@ -1097,12 +1094,7 @@ void qr_scanner_page_destroy(void) {
     ESP_LOGW(TAG, "Timeout waiting for frame operations (remaining: %d)",
              remaining_ops);
 
-  if (camera_ctlr_handle >= 0) {
-    app_video_stream_task_stop(camera_ctlr_handle);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    app_video_close(camera_ctlr_handle);
-    camera_ctlr_handle = -1;
-  }
+  app_video_stop();
 
   qr_decoder_cleanup();
 
@@ -1129,11 +1121,6 @@ void qr_scanner_page_destroy(void) {
   if (cam_ppa_client) {
     ppa_unregister_client(cam_ppa_client);
     cam_ppa_client = NULL;
-  }
-
-  if (video_system_initialized) {
-    app_video_deinit();
-    video_system_initialized = false;
   }
 
   if (camera_event_group) {
@@ -1168,6 +1155,10 @@ char *qr_scanner_get_completed_content_with_len(size_t *content_len) {
 }
 
 bool qr_scanner_is_ready(void) { return is_fully_initialized && !closing; }
+
+bool qr_scanner_has_completed_result(void) {
+  return qr_parser && qr_parser_is_complete(qr_parser);
+}
 
 int qr_scanner_get_format(void) {
   if (qr_parser) {

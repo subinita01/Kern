@@ -16,6 +16,11 @@ static const char *TAG = "sd_card";
 static sdmmc_card_t *s_card = NULL;
 static bool s_mounted = false;
 
+#define SD_CARD_HAS_CUSTOM_GPIO                                                \
+  (CONFIG_SD_CLK_GPIO != -1 || CONFIG_SD_CMD_GPIO != -1 ||                     \
+   CONFIG_SD_D0_GPIO != -1 || CONFIG_SD_D1_GPIO != -1 ||                       \
+   CONFIG_SD_D2_GPIO != -1 || CONFIG_SD_D3_GPIO != -1)
+
 static esp_err_t sd_card_enable_power(void) {
   static esp_ldo_channel_handle_t s_ldo_chan = NULL;
   if (s_ldo_chan)
@@ -24,9 +29,61 @@ static esp_err_t sd_card_enable_power(void) {
   esp_ldo_channel_config_t ldo_cfg = {.chan_id = 4, .voltage_mv = 3300};
   esp_err_t ret = esp_ldo_acquire_channel(&ldo_cfg, &s_ldo_chan);
   if (ret != ESP_OK) {
+#if CONFIG_KERN_BOARD_CROWPANEL
+    if (ret == ESP_ERR_INVALID_STATE) {
+      ESP_LOGW(TAG, "LDO VO4 already enabled; sharing CrowPanel panel rail");
+      return ESP_OK;
+    }
+#endif
     ESP_LOGE(TAG, "Failed to enable LDO VO4: %s", esp_err_to_name(ret));
   }
   return ret;
+}
+
+static esp_err_t sd_card_configure_slot(sdmmc_slot_config_t *slot_config) {
+#if CONFIG_SD_BUS_WIDTH != 1 && CONFIG_SD_BUS_WIDTH != 4
+  ESP_LOGE(TAG, "Unsupported SD bus width: %d", CONFIG_SD_BUS_WIDTH);
+  return ESP_ERR_INVALID_ARG;
+#endif
+
+  slot_config->cd = SDMMC_SLOT_NO_CD;
+  slot_config->wp = SDMMC_SLOT_NO_WP;
+  slot_config->width = CONFIG_SD_BUS_WIDTH;
+
+#if SD_CARD_HAS_CUSTOM_GPIO
+#if CONFIG_SD_CLK_GPIO == -1 || CONFIG_SD_CMD_GPIO == -1 ||                    \
+    CONFIG_SD_D0_GPIO == -1
+  ESP_LOGE(TAG, "Custom SD GPIO routing requires CLK, CMD, and D0 pins");
+  return ESP_ERR_INVALID_ARG;
+#endif
+
+  slot_config->clk = (gpio_num_t)CONFIG_SD_CLK_GPIO;
+  slot_config->cmd = (gpio_num_t)CONFIG_SD_CMD_GPIO;
+  slot_config->d0 = (gpio_num_t)CONFIG_SD_D0_GPIO;
+
+#if CONFIG_SD_BUS_WIDTH == 4
+#if CONFIG_SD_D1_GPIO == -1 || CONFIG_SD_D2_GPIO == -1 ||                      \
+    CONFIG_SD_D3_GPIO == -1
+  ESP_LOGE(TAG, "4-bit custom SD GPIO routing requires D1, D2, and D3 pins");
+  return ESP_ERR_INVALID_ARG;
+#endif
+  slot_config->d1 = (gpio_num_t)CONFIG_SD_D1_GPIO;
+  slot_config->d2 = (gpio_num_t)CONFIG_SD_D2_GPIO;
+  slot_config->d3 = (gpio_num_t)CONFIG_SD_D3_GPIO;
+#else
+#if CONFIG_SD_D1_GPIO != -1 || CONFIG_SD_D2_GPIO != -1 ||                      \
+    CONFIG_SD_D3_GPIO != -1
+  ESP_LOGE(TAG, "D1, D2, and D3 SD pins require SD_BUS_WIDTH=4");
+  return ESP_ERR_INVALID_ARG;
+#endif
+#endif
+#endif
+
+#if CONFIG_SD_INTERNAL_PULLUP
+  slot_config->flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+#endif
+
+  return ESP_OK;
 }
 
 esp_err_t sd_card_init(void) {
@@ -49,12 +106,10 @@ esp_err_t sd_card_init(void) {
   host.slot = SDMMC_HOST_SLOT_0;
   host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
 
-  sdmmc_slot_config_t slot_config = {
-      .cd = SDMMC_SLOT_NO_CD,
-      .wp = SDMMC_SLOT_NO_WP,
-      .width = 4,
-      .flags = 0,
-  };
+  sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+  ret = sd_card_configure_slot(&slot_config);
+  if (ret != ESP_OK)
+    return ret;
 
   ret = esp_vfs_fat_sdmmc_mount(SD_CARD_MOUNT_POINT, &host, &slot_config,
                                 &mount_config, &s_card);

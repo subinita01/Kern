@@ -14,7 +14,7 @@
 
 #include "../components/video/video.h"
 #include "../ui/dialog.h"
-#include "../ui/theme.h"
+#include "../ui/theme_widgets.h"
 #include "../utils/memory_utils.h"
 #include "../utils/secure_mem.h"
 
@@ -48,9 +48,7 @@ static lv_obj_t *capture_screen = NULL;
 static lv_obj_t *camera_img = NULL;
 static void (*return_callback)(void) = NULL;
 
-static int camera_handle = -1;
 static lv_img_dsc_t img_dsc;
-static bool video_initialized = false;
 static EventGroupHandle_t camera_event_group = NULL;
 
 static uint8_t *display_buffer_a = NULL;
@@ -181,7 +179,10 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
 
   uint32_t in_w = camera_buf_hes ? camera_buf_hes : CAMERA_INPUT_WIDTH;
   uint32_t in_h = camera_buf_ves ? camera_buf_ves : CAMERA_INPUT_HEIGHT;
-  uint32_t crop = (in_w < in_h) ? in_w : in_h;
+  uint32_t crop_max = (in_w < in_h) ? in_w : in_h;
+  // Snap crop so PPA's Q4.4 scale produces exactly CAMERA_WIDTH; otherwise
+  // the truncated scale leaves a noisy column on the right edge.
+  uint32_t crop = app_video_ppa_snap_crop(crop_max, CAMERA_WIDTH);
   uint32_t crop_ox = (in_w - crop) / 2;
   uint32_t crop_oy = (in_h - crop) / 2;
   float scale = (float)CAMERA_WIDTH / (float)crop;
@@ -217,7 +218,6 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
       current_display_buffer = back_buffer;
       img_dsc.data = back_buffer;
       lv_img_set_src(camera_img, &img_dsc);
-      lv_refr_now(NULL);
     }
     bsp_display_unlock();
   }
@@ -226,28 +226,19 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
 }
 
 static bool camera_init(void) {
-  if (video_initialized)
+  if (app_video_is_streaming())
     return true;
+
+  if (!app_video_is_ready()) {
+    ESP_LOGE(TAG, "Video pipeline is not ready");
+    return false;
+  }
 
   camera_event_group = xEventGroupCreate();
   if (!camera_event_group)
     return false;
 
   xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
-
-  i2c_master_bus_handle_t i2c_handle = bsp_i2c_get_handle();
-  if (!i2c_handle)
-    return false;
-
-  if (app_video_main(i2c_handle) != ESP_OK)
-    return false;
-  video_initialized = true;
-
-  camera_handle = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT_RGB565);
-  if (camera_handle < 0)
-    return false;
-
-  ESP_ERROR_CHECK(app_video_register_frame_operation_cb(camera_frame_cb));
 
   img_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
@@ -263,22 +254,20 @@ static bool camera_init(void) {
   current_display_buffer = display_buffer_a;
   img_dsc.data = current_display_buffer;
 
-  ESP_ERROR_CHECK(app_video_set_bufs(camera_handle, CAM_BUF_NUM, NULL));
-
-  if (app_video_stream_task_start(camera_handle, 0) != ESP_OK)
-    return false;
-
-  // Apply the wider AE hysteresis + gain cap — without this, the sensor keeps
-  // its init-time ±8% window and uncapped gain ceiling, which causes
-  // square-wave luminance pulsing under low-light, high-contrast scenes.
-  app_video_set_ae_target(camera_handle, 80);
-
   ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
   if (ppa_register_client(&ppa_cfg, &cam_ppa_client) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register PPA client");
     cam_ppa_client = NULL;
     return false;
   }
+
+  if (app_video_start(camera_frame_cb, 0) != ESP_OK)
+    return false;
+
+  // Apply the wider AE hysteresis + gain cap - without this, the sensor keeps
+  // its init-time +/-8% window and uncapped gain ceiling, which causes
+  // square-wave luminance pulsing under low-light, high-contrast scenes.
+  app_video_set_ae_target(80);
 
   return true;
 }
@@ -322,21 +311,17 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   entropy_captured = false;
   secure_memzero(captured_entropy, sizeof(captured_entropy));
 
-  capture_screen = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(capture_screen, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(capture_screen, lv_color_hex(0x1e1e1e), 0);
-  lv_obj_set_style_bg_opa(capture_screen, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(capture_screen, 0, 0);
-  lv_obj_set_style_pad_all(capture_screen, 0, 0);
-  lv_obj_set_style_radius(capture_screen, 0, 0);
-  lv_obj_clear_flag(capture_screen, LV_OBJ_FLAG_SCROLLABLE);
+  if (!app_video_is_ready()) {
+    dialog_show_error_timeout("Camera not available", return_callback, 0);
+    return;
+  }
+
+  capture_screen = theme_create_page_container(lv_screen_active());
 
   lv_obj_t *frame = lv_obj_create(capture_screen);
   lv_obj_set_size(frame, CAMERA_WIDTH, CAMERA_HEIGHT);
   lv_obj_center(frame);
-  lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(frame, 0, 0);
-  lv_obj_set_style_pad_all(frame, 0, 0);
+  theme_apply_transparent_container(frame);
   lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(frame, touch_event_cb, LV_EVENT_CLICKED, NULL);
 
@@ -344,18 +329,13 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(camera_img, CAMERA_WIDTH, CAMERA_HEIGHT);
   lv_obj_center(camera_img);
   lv_obj_clear_flag(camera_img, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(camera_img, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(camera_img, LV_OPA_COVER, 0);
 
-  lv_obj_t *title =
-      theme_create_label(capture_screen, "Capture Entropy", false);
-  theme_apply_label(title, true);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+  theme_create_page_title(capture_screen, "Capture Entropy");
 
   lv_obj_t *instruction =
       theme_create_label(capture_screen, "Tap to capture", false);
   lv_obj_set_style_text_color(instruction, highlight_color(), 0);
-  lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0, -10);
+  lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0, -theme_default_padding());
 
   if (!camera_init()) {
     ESP_LOGE(TAG, "Failed to initialize camera");
@@ -391,12 +371,7 @@ void capture_entropy_page_destroy(void) {
     wait++;
   }
 
-  if (camera_handle >= 0) {
-    app_video_stream_task_stop(camera_handle);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    app_video_close(camera_handle);
-    camera_handle = -1;
-  }
+  app_video_stop();
 
   bool locked = bsp_display_lock(1000);
   camera_img = NULL;
@@ -412,11 +387,6 @@ void capture_entropy_page_destroy(void) {
   if (cam_ppa_client) {
     ppa_unregister_client(cam_ppa_client);
     cam_ppa_client = NULL;
-  }
-
-  if (video_initialized) {
-    app_video_deinit();
-    video_initialized = false;
   }
 
   if (camera_event_group) {

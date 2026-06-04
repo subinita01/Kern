@@ -1,8 +1,8 @@
 #include "key_info.h"
 #include "../core/key.h"
-#include "../core/wallet.h"
 #include "assets/icons_24.h"
-#include "theme.h"
+#include "battery.h"
+#include "theme_widgets.h"
 #include <stdio.h>
 
 lv_obj_t *ui_icon_text_row_create(lv_obj_t *parent, const char *icon,
@@ -27,30 +27,46 @@ lv_obj_t *ui_fingerprint_create(lv_obj_t *parent, lv_color_t color) {
 }
 
 lv_obj_t *ui_derivation_create(lv_obj_t *parent, lv_color_t color) {
-  const char *derivation = wallet_get_derivation();
-  if (!derivation)
-    return NULL;
-  return ui_icon_text_row_create(parent, ICON_DERIVATION, derivation, color);
+  (void)parent;
+  (void)color;
+  return NULL;
 }
 
 lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
   lv_obj_t *cont = theme_create_flex_row(parent);
-  lv_obj_set_style_pad_column(cont, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_column(cont, theme_default_padding(), 0);
 
   // On small screens the row shares space with corner buttons that are
   // absolutely positioned over the page.  Allow wrapping and constrain
   // the row width so content stays between the buttons.
-  int btn_zone = theme_get_corner_button_width();
+  int btn_zone = theme_corner_button_width();
   lv_obj_set_width(cont, lv_pct(100));
   lv_obj_set_style_pad_left(cont, btn_zone, 0);
   lv_obj_set_style_pad_right(cont, btn_zone, 0);
   lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW_WRAP);
 
-  if (!ui_fingerprint_create(cont, highlight_color()) ||
-      !ui_derivation_create(cont, secondary_color())) {
+  if (!ui_fingerprint_create(cont, highlight_color())) {
     lv_obj_del(cont);
     return NULL;
   }
 
   return cont;
+}
+
+lv_obj_t *ui_key_info_bar_create(lv_obj_t *parent) {
+  lv_obj_t *bar = lv_obj_create(parent);
+  lv_obj_set_size(bar, LV_PCT(100), theme_corner_button_height());
+  theme_apply_transparent_container(bar);
+  lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *header = ui_key_info_create(bar);
+  if (!header) {
+    lv_obj_del(bar);
+    return NULL;
+  }
+  ui_battery_create(header);
+  return bar;
 }

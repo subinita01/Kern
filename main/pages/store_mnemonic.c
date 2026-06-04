@@ -5,7 +5,7 @@
 #include "../core/storage.h"
 #include "../qr/encoder.h"
 #include "../ui/dialog.h"
-#include "../ui/theme.h"
+#include "../ui/theme_widgets.h"
 #include "../utils/secure_mem.h"
 #include "shared/kef_encrypt_page.h"
 
@@ -70,7 +70,7 @@ static void do_save(void) {
     dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
                      DIALOG_STYLE_OVERLAY);
   } else {
-    dialog_show_error("Failed to save", go_back, 0);
+    dialog_show_error_timeout("Failed to save", go_back, 0);
   }
 }
 
@@ -144,7 +144,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   /* Get mnemonic and convert to compact SeedQR (binary entropy) */
   char *mnemonic = NULL;
   if (!key_get_mnemonic(&mnemonic) || !mnemonic) {
-    dialog_show_error("Failed to get mnemonic", return_cb, 0);
+    dialog_show_error_timeout("Failed to get mnemonic", return_cb, 0);
     return;
   }
 
@@ -156,7 +156,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   wally_free_string(mnemonic);
 
   if (!compact_seedqr_data) {
-    dialog_show_error("Failed to prepare data", return_cb, 0);
+    dialog_show_error_timeout("Failed to prepare data", return_cb, 0);
     return;
   }
 
@@ -167,7 +167,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   lv_obj_t *title_label = lv_label_create(main_screen);
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(title_label, main_color(), 0);
+  lv_obj_set_style_text_color(title_label, primary_color(), 0);
   lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 0);
 
   kef_encrypt_page_create(parent, encrypt_return_cb, encrypt_success_cb,
