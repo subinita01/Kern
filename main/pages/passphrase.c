@@ -199,6 +199,8 @@ void passphrase_page_create(lv_obj_t *parent, void (*return_cb)(void),
   strength_label = lv_label_create(passphrase_screen);
   lv_label_set_text(strength_label, "");
   lv_obj_set_style_text_font(strength_label, theme_font_small(), 0);
+  lv_obj_set_width(strength_label, LV_PCT(100));
+  lv_obj_set_style_text_align(strength_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align_to(strength_label, text_input.textarea, LV_ALIGN_OUT_BOTTOM_MID,
                   0, 5);
   lv_obj_add_event_cb(text_input.keyboard, passphrase_changed_cb,
