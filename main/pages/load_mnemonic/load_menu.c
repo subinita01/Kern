@@ -136,13 +136,18 @@ static void from_qr_code_cb(void) {
   qr_scanner_page_show();
 }
 
-static void words_input_cb(void) {
+static void start_words_input(int word_count) {
   if (manual_method_menu)
     ui_menu_hide(manual_method_menu);
-  manual_input_page_create(lv_screen_active(), return_from_words_input_cb,
-                           success_from_manual_input_cb, false);
+  manual_input_page_create_with_word_count(
+      lv_screen_active(), return_from_words_input_cb,
+      success_from_manual_input_cb, false, word_count);
   manual_input_page_show();
 }
+
+static void words_12_input_cb(void) { start_words_input(12); }
+
+static void words_24_input_cb(void) { start_words_input(24); }
 
 static void word_numbers_input_cb(void) {
   if (manual_method_menu)
@@ -173,9 +178,11 @@ static void show_manual_method_menu(void) {
       load_menu_page_show();
       return;
     }
-    ui_menu_add_entry(manual_method_menu, "Words", words_input_cb);
-    ui_menu_add_entry(manual_method_menu, "Word Numbers",
+    ui_menu_add_entry(manual_method_menu, "12 Words", words_12_input_cb);
+    ui_menu_add_entry(manual_method_menu, "24 Words", words_24_input_cb);
+    ui_menu_add_entry(manual_method_menu, "Input as Numbers",
                       word_numbers_input_cb);
+    ui_menu_set_entry_secondary(manual_method_menu, 2, true);
   }
   ui_menu_show(manual_method_menu);
 }
