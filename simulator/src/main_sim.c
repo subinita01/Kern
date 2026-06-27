@@ -293,24 +293,14 @@ int main(int argc, char *argv[]) {
 
         uint32_t render_time = SDL_GetTicks() - start;
 
-        /* Use a fixed 33ms cap until the moving-average window is full. */
-        if (warmup_frames < 8) {
-            warmup_frames++;
-            SDL_Delay(ms_til_next > 33 ? 33 : (ms_til_next < 1 ? 1 : ms_til_next));
-            continue;
-        }
-
-        /* Update 8-sample moving average of render time. */
         render_history[render_history_idx] = render_time;
         render_history_idx = (render_history_idx + 1) % 8;
+        if (warmup_frames < 8) { warmup_frames++; }
 
         uint32_t avg_render = 0;
         for (size_t i = 0; i < 8; i++) avg_render += render_history[i];
         avg_render /= 8;
 
-        /* Three-tier cap: 60 / 45 / 30 fps.
-         * Floor of 16ms ensures the main thread keeps pace with the camera
-         * thread which delivers frames every ~33ms. */
         if (avg_render < 15)      adaptive_cap = 16;   /* 60 fps */
         else if (avg_render < 25) adaptive_cap = 22;   /* 45 fps */
         else                      adaptive_cap = 33;   /* 30 fps */
