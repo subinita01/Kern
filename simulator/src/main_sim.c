@@ -295,7 +295,12 @@ int main(int argc, char *argv[]) {
 
         render_history[render_history_idx] = render_time;
         render_history_idx = (render_history_idx + 1) % 8;
-        if (warmup_frames < 8) { warmup_frames++; }
+
+        if (warmup_frames < 8) {
+            warmup_frames++;
+            SDL_Delay(ms_til_next > 33 ? 33 : (ms_til_next < 1 ? 1 : ms_til_next));
+            continue;
+        }
 
         uint32_t avg_render = 0;
         for (size_t i = 0; i < 8; i++) avg_render += render_history[i];
