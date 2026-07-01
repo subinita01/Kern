@@ -73,7 +73,7 @@ The ESP32-P4 provides six eFuse key blocks (BLOCK_KEY0–KEY5). Secure Boot v2 s
 
 KEY3 holds the flash-encryption key (Phase 4), KEY4 the NVS-encryption HMAC (Phase 3), and KEY5 the anti-phishing HMAC (Phase 2). All six blocks are allocated. Because **all three secure-boot digest slots are populated**, there is no free digest slot for an attacker to inject a rogue signing key.
 
-> **Flash-encryption interaction:** With three digest slots consuming KEY0–KEY2, only one key block (KEY3) is left for flash encryption. XTS-AES-256 normally needs two blocks. Kern keeps 256-bit strength by deploying the flash-encryption key through the ESP32-P4 **Key Manager** (`CONFIG_SECURE_FLASH_ENCRYPTION_KEY_SOURCE`), which stores the key outside the shared eFuse blocks. If the Key Manager path is not used, fall back to **XTS-AES-128** in KEY3 (single block). This is a Phase 4 decision — see [security-plan.md](security-plan.md).
+> **Flash-encryption interaction:** With three digest slots consuming KEY0–KEY2, only one key block (KEY3) is left for flash encryption. XTS-AES-256 normally needs two blocks. Kern keeps 256-bit strength by deploying the flash-encryption key through the ESP32-P4 **Key Manager** (Kconfig choice `SECURE_FLASH_ENCRYPTION_KEY_SOURCE`, option `..._KEY_MGR`), which stores the key outside the shared eFuse blocks. If the Key Manager path is not used, fall back to **XTS-AES-128** in KEY3 (single block). This is a Phase 4 decision — see [security-plan.md](security-plan.md).
 
 ### Revocation
 
@@ -474,9 +474,11 @@ sha256sum -c SHA256SUMS
 
 ```bash
 esptool --chip esp32p4 write-flash \
-    0x0 bootloader-signed.bin \
+    0x2000 bootloader-signed.bin \
     0x20000 kern-signed.bin
 ```
+
+> The ESP32-P4 second-stage bootloader lives at flash offset **0x2000** — not 0x0 or 0x1000 as on older chips. `0x20000` is the app slot (`ota_0` after the Phase 3 partition migration; previously `factory`). A blank chip additionally needs the partition table at `0x8000` and `ota_data_initial.bin` at the `otadata` offset.
 
 2. Boot into Kern and navigate to **Settings → Secure Boot → Lock with Developer Keys**.
 3. The device displays:
@@ -486,12 +488,15 @@ esptool --chip esp32p4 write-flash \
 4. Confirm by entering the device PIN.
 5. The firmware:
    - Verifies that `SECURE_BOOT_EN` is not already set.
-   - Verifies that KEY0, KEY1, and KEY2 eFuse blocks are empty.
-   - Verifies the running firmware carries a valid signature (so a device with an unsigned image can't brick itself).
+   - Verifies that KEY0, KEY1, and KEY2 eFuse blocks are empty — or already contain exactly the three embedded digests, in which case it offers to **resume** an interrupted lockdown (see power-cut note below).
+   - Verifies the running app carries a valid signature **and** that the signing key's digest matches one of the embedded digests — a valid signature from a non-matching key would still brick on reboot.
+   - Verifies the bootloader image in flash (offset 0x2000): every embedded digest must be covered by one of its appended signatures, because the bootloader can never be re-signed after lockdown.
    - Writes `KERN_SB_DIGEST0` to `BLOCK_KEY0` with purpose `SECURE_BOOT_DIGEST0`.
    - Writes `KERN_SB_DIGEST1` to `BLOCK_KEY1` with purpose `SECURE_BOOT_DIGEST1`.
    - Writes `KERN_SB_DIGEST2` to `BLOCK_KEY2` with purpose `SECURE_BOOT_DIGEST2`.
+   - Burns the hardening eFuses the stock bootloader would burn alongside secure boot: `DIS_DIRECT_BOOT`, the JTAG-disable set (`DIS_PAD_JTAG`, `DIS_USB_JTAG`, `SOFT_DIS_JTAG`), and secure ROM download mode (full download-mode disable is deferred to Phase 7).
    - Burns the `SECURE_BOOT_EN` eFuse bit.
+   - Write-protects `RD_DIS` — otherwise an attacker could later *read-protect* a digest block, blinding the ROM verifier: a permanent brick.
    - Displays confirmation with the final eFuse state.
 6. Device reboots. From this point, only firmware signed with `kern-sb-key0.pem`, `kern-sb-key1.pem`, or `kern-sb-key2.pem` will boot.
 
@@ -507,14 +512,17 @@ The lockdown function should follow this sequence:
 
 esp_err_t kern_secure_boot_lockdown(void) {
     // 1. Pre-flight checks
-    //    - Verify SECURE_BOOT_EN is not already set
-    //    - Verify KEY0, KEY1, KEY2 blocks are empty
-    //    - Verify the running app is properly signed:
-    //        esp_secure_boot_verify_rsa_signature_block() over the running image.
+    //    - SECURE_BOOT_EN not already set
+    //    - KEY0/KEY1/KEY2 empty, or holding exactly the embedded digests (resume path)
+    //    - Running app: signature verifies AND its public-key digest matches an
+    //      embedded digest — esp_secure_boot_verify_rsa_signature_block().
     //      (The generic esp_secure_boot_verify_signature_block() was removed in
     //       ESP-IDF 6.0 — use the RSA-specific variant.)
+    //    - Bootloader image at 0x2000: every embedded digest covered by one of its
+    //      appended signatures (it can never be re-signed after lockdown)
 
-    // 2. Burn digests (batch so a power cut can't leave a half-written set)
+    // 2. Burn digests (batch so a power cut can't leave a half-written set);
+    //    skipped when resuming an interrupted lockdown that already burned them
     esp_efuse_batch_write_begin();
     esp_efuse_write_key(EFUSE_BLK_KEY0,
         ESP_EFUSE_KEY_PURPOSE_SECURE_BOOT_DIGEST0, KERN_SB_DIGEST0, 32);
@@ -524,19 +532,38 @@ esp_err_t kern_secure_boot_lockdown(void) {
         ESP_EFUSE_KEY_PURPOSE_SECURE_BOOT_DIGEST2, KERN_SB_DIGEST2, 32);
     esp_efuse_batch_write_commit();
 
-    // 3. Enable secure boot — POINT OF NO RETURN
+    // 3. Hardening eFuses — mirror esp_secure_boot_enable_secure_features()
+    //    (esp-idf: components/bootloader_support/src/esp32p4/secure_boot_secure_features.c).
+    //    The stock bootloader burns these when *it* enables secure boot; a custom
+    //    lockdown flow that skips them leaves JTAG and serial flash readout wide open.
+    esp_efuse_write_field_bit(ESP_EFUSE_DIS_DIRECT_BOOT);
+    esp_efuse_write_field_bit(ESP_EFUSE_DIS_PAD_JTAG);
+    esp_efuse_write_field_bit(ESP_EFUSE_DIS_USB_JTAG);
+    esp_efuse_write_field_cnt(ESP_EFUSE_SOFT_DIS_JTAG, ESP_EFUSE_SOFT_DIS_JTAG[0]->bit_count);
+    esp_efuse_enable_rom_secure_download_mode();  // full disable deferred to Phase 7
+
+    // 4. Enable secure boot — POINT OF NO RETURN
     esp_efuse_write_field_bit(ESP_EFUSE_SECURE_BOOT_EN);
+
+    // 5. Block post-hoc read-protection of the digest blocks (RD_DIS on a digest
+    //    block would blind the ROM verifier — a permanent brick vector)
+    esp_efuse_write_field_bit(ESP_EFUSE_WR_DIS_RD_DIS);
 
     return ESP_OK;
 }
 ```
+
+> **Why secure download mode, not full disable:** Profile A has no flash encryption, so leaving ROM download mode fully open would allow flash readout over serial. Secure download mode blocks read commands while keeping *signed* serial re-flash available as a recovery path. Disabling download mode entirely is a Phase 7 (Profile B) decision.
+
+**Power-cut resume:** the digest batch and `SECURE_BOOT_EN` are separate eFuse writes. A power cut between them leaves KEY0–KEY2 occupied with secure boot still off. The menu must detect this state (all three blocks match the embedded digests, `SECURE_BOOT_EN` clear) and offer to *complete* the lockdown — a plain "blocks not empty → refuse" guard would make lockdown permanently uncompletable on such a device.
 
 The menu system must enforce:
 
 - PIN entry before showing the lockdown option.
 - Display of all three digest hex values for visual verification.
 - An explicit confirmation prompt warning of irreversibility.
-- Verification that the running firmware is signed before proceeding (a device that locks down with unsigned firmware running will brick on next boot).
+- Verification that the running app **and** the flashed bootloader are signed by keys matching the embedded digests before proceeding (a device that locks down with a mismatched or unsigned image will brick on next boot).
+- The power-cut resume path above; refuse only when the key blocks hold *unexpected* data.
 
 #### Alternative Method: Manual Lockdown via espefuse
 
@@ -557,7 +584,7 @@ sha256sum -c SHA256SUMS
 
 # 2. Flash the signed firmware via serial (last time serial will work)
 esptool --chip esp32p4 write-flash \
-    0x0 bootloader-signed.bin \
+    0x2000 bootloader-signed.bin \
     0x20000 kern-signed.bin
 
 # 3. Burn the three signing key digests into KEY0, KEY1, KEY2
@@ -566,11 +593,22 @@ espefuse --chip esp32p4 burn-key \
     BLOCK_KEY1 kern-sb-digest1.bin SECURE_BOOT_DIGEST1 \
     BLOCK_KEY2 kern-sb-digest2.bin SECURE_BOOT_DIGEST2
 
-# 4. Enable secure boot — POINT OF NO RETURN
+# 4. Burn the hardening eFuses the stock bootloader would burn alongside
+#    secure boot (JTAG off, direct boot off, secure download mode)
+espefuse --chip esp32p4 burn-efuse DIS_DIRECT_BOOT 1
+espefuse --chip esp32p4 burn-efuse DIS_PAD_JTAG 1
+espefuse --chip esp32p4 burn-efuse DIS_USB_JTAG 1
+espefuse --chip esp32p4 burn-efuse SOFT_DIS_JTAG 7
+espefuse --chip esp32p4 burn-efuse ENABLE_SECURITY_DOWNLOAD 1
+
+# 5. Enable secure boot — POINT OF NO RETURN
 espefuse --chip esp32p4 burn-efuse SECURE_BOOT_EN
+
+# 6. Prevent post-hoc read-protection of the digest blocks
+espefuse --chip esp32p4 write-protect-efuse RD_DIS
 ```
 
-After step 4, only firmware signed with `kern-sb-key0.pem`, `kern-sb-key1.pem`, or `kern-sb-key2.pem` will boot on this device.
+After step 5, only firmware signed with `kern-sb-key0.pem`, `kern-sb-key1.pem`, or `kern-sb-key2.pem` will boot on this device.
 
 ### 5b. User Builds from Source (Self-Sovereign)
 
@@ -615,7 +653,8 @@ espefuse --chip esp32p4 burn-key \
     BLOCK_KEY1 my-digest0.bin      SECURE_BOOT_DIGEST1 \
     BLOCK_KEY2 my-digest1.bin      SECURE_BOOT_DIGEST2
 
-# Enable secure boot
+# Burn the hardening eFuses (step 4 of the 5a manual method), then enable
+# secure boot and write-protect RD_DIS as in steps 5-6 there
 espefuse --chip esp32p4 burn-efuse SECURE_BOOT_EN
 ```
 
@@ -679,6 +718,10 @@ Anti-rollback prevents downgrading to older firmware versions that may contain k
 - It compares this against an eFuse **monotonic counter**.
 - If the image's security version is lower than the eFuse counter, boot is rejected.
 - After successful boot, the eFuse counter is updated to match the image's security version (burning additional bits — irreversible).
+
+### Partition Layout Requirement
+
+Anti-rollback assumes an **OTA-only** partition table — two `ota_app` slots and no `factory` (stated in ESP-IDF's `bootloader_utility.c`). A factory image is frozen at flash time with security version 0, so the first eFuse counter increment would make it unbootable. Kern's Phase 3 partition migration drops the factory partition accordingly; the fallback role moves to the *previous OTA slot*, which is why the SD update flow must self-test and call `esp_ota_mark_app_valid_cancel_rollback()` after every update (see [security-plan.md Phase 6](security-plan.md#phase-6--air-gapped-sd-card-updates)).
 
 ### Configuration
 
@@ -761,7 +804,7 @@ eFuses must be burned in a specific order. The critical rule: **every read-prote
 | 4 | `burn-key BLOCK_KEY0 ... SECURE_BOOT_DIGEST0` | KEY0 | **No** | Phase 5 | Primary secure boot digest |
 | 5 | `burn-key BLOCK_KEY1 ... SECURE_BOOT_DIGEST1` | KEY1 | **No** | Phase 5 | Rotation #1 secure boot digest |
 | 6 | `burn-key BLOCK_KEY2 ... SECURE_BOOT_DIGEST2` | KEY2 | **No** | Phase 5 | Rotation #2 secure boot digest |
-| 7 | `burn-efuse SECURE_BOOT_EN` | Control | **No** | Phase 5 | **Enables secure boot permanently; write-protects `RD_DIS`** |
+| 7 | `burn-efuse SECURE_BOOT_EN` (+ hardening set) | Control | **No** | Phase 5 | **Enables secure boot permanently.** Burned together with `DIS_DIRECT_BOOT`, the JTAG-disable set, secure download mode, then the `RD_DIS` write-protect |
 | 8 | Flash-encryption release mode + secure/disabled serial download | Control | **No** | Phase 7 | Release lockdown — permanently disables plaintext serial flashing |
 
 > **Every eFuse burn is irreversible.** Double-check the digest files and key purposes before confirming. Use `espefuse summary` to inspect current eFuse state before and after each burn. Because all three secure-boot digest slots are used, there is no unused digest slot to revoke — but if you ever leave one empty (e.g. a custom hybrid layout), revoke it before enabling secure boot. For **Profile A** (on-device: PIN/NVS encryption + secure boot, no flash encryption) rows 3 and 8 are skipped, and the whole sequence — including the KEY4 (NVS) burn in row 2 — runs from on-device flows.
@@ -788,15 +831,20 @@ Complete these steps on a **development board** before any production device.
 - [ ] Verify all three digest hex values are displayed correctly on screen
 - [ ] Verify PIN is required before proceeding
 - [ ] Verify warning about irreversibility is shown
-- [ ] Confirm lockdown — device writes three digests and burns `SECURE_BOOT_EN`
+- [ ] Confirm lockdown — device writes three digests, burns the hardening set, and burns `SECURE_BOOT_EN`
 - [ ] Read eFuse state: `espefuse summary` — verify KEY0/KEY1/KEY2 are programmed and `SECURE_BOOT_EN` is set
+- [ ] Verify hardening eFuses: `DIS_DIRECT_BOOT`, `DIS_PAD_JTAG`, `DIS_USB_JTAG`, `SOFT_DIS_JTAG`, `ENABLE_SECURITY_DOWNLOAD` set, and `RD_DIS` write-protected
+- [ ] Attempt JTAG attach — **must fail**
 - [ ] Device reboots and boots normally with signed firmware
 
 ### On-Device Lockdown — Guard Rails
 
 - [ ] Attempt lockdown on a device with `SECURE_BOOT_EN` already set — **must refuse**
-- [ ] Attempt lockdown on a device with any of KEY0/KEY1/KEY2 already occupied — **must refuse**
+- [ ] Attempt lockdown on a device whose KEY0/KEY1/KEY2 hold *unexpected* digests — **must refuse**
+- [ ] Pre-burn the three embedded digests via `espefuse` (simulating a power cut before `SECURE_BOOT_EN`), then open the menu — **must offer to resume/complete the lockdown**, not refuse
 - [ ] Attempt lockdown with unsigned firmware running — **must refuse** (firmware should detect it is not properly signed and block the operation)
+- [ ] Attempt lockdown with firmware signed by a key that does not match the embedded digests — **must refuse**
+- [ ] Attempt lockdown with a bootloader that does not carry signatures covering all three embedded digests — **must refuse**
 
 ### Manual Lockdown via espefuse (Alternative Path)
 
@@ -809,6 +857,7 @@ Complete these steps on a **development board** before any production device.
 ### Post-Lockdown Verification
 
 - [ ] Attempt to flash unsigned firmware via serial — **must fail**
+- [ ] Attempt flash readout via ROM download mode — **must fail** (secure download mode)
 - [ ] Attempt to flash firmware signed with a different key — **must fail**
 - [ ] Sign firmware with key0 → boots successfully
 - [ ] Sign firmware with key1 → boots successfully

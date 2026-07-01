@@ -62,7 +62,8 @@ When you navigate to **Settings > Secure Boot > Lock with Developer Keys**, the 
 1. Display the hex values of Digest 0, Digest 1, and Digest 2 (from constants embedded in the firmware).
 2. Show a warning that this action is **irreversible** (eFuses are permanently burned).
 3. Require PIN entry to proceed.
-4. Burn the three digests into eFuse KEY0/KEY1/KEY2, then set the `SECURE_BOOT_EN` bit.
+4. Verify that the running firmware **and** the flashed bootloader are signed with keys matching the embedded digests (a mismatch would brick the device on reboot).
+5. Burn the three digests into eFuse KEY0/KEY1/KEY2 along with the standard hardening eFuses (direct-boot disable, JTAG disable, secure download mode), set the `SECURE_BOOT_EN` bit, and write-protect `RD_DIS` — the same set the stock ESP-IDF bootloader burns when it enables secure boot.
 
 **Before confirming**, verify that the digests shown on screen match the values in this README and in the release notes. This ensures the firmware you are running contains the authentic developer keys.
 
