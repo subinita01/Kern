@@ -206,8 +206,8 @@ lv_obj_t *theme_create_progress_bar(lv_obj_t *parent, lv_obj_t *anchor,
     return NULL;
 
   lv_obj_t *bar = lv_bar_create(parent);
-  int32_t thickness = theme_min_dim() / 100 + 2;
-  lv_obj_set_size(bar, LV_PCT(60), thickness);
+  int32_t thickness = theme_min_dim() / 150 + 1;
+  lv_obj_set_size(bar, LV_PCT(40), thickness);
   lv_bar_set_range(bar, 0, total);
   lv_bar_set_value(bar, current, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(bar, disabled_color(), LV_PART_MAIN);
