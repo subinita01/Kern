@@ -375,9 +375,37 @@ static void create_back_or_power_button(void) {
     ui_create_power_button(page_screen, power_btn_cb);
 }
 
+// Number of visible screens in the first-time PIN setup flow (choose,
+// confirm, split, show words). STATE_SETUP_EFUSE is a dialog overlay, not a
+// screen, so it doesn't get a step.
+#define PIN_SETUP_STEP_COUNT 4
+
+static int32_t setup_step_for_state(pin_flow_state_t state) {
+  switch (state) {
+  case STATE_SETUP_FULL_PIN:
+    return 1;
+  case STATE_SETUP_CONFIRM_PIN:
+    return 2;
+  case STATE_SETUP_SPLIT:
+    return 3;
+  case STATE_SETUP_SHOW_WORDS:
+    return 4;
+  default:
+    return 0;
+  }
+}
+
 static void build_chrome(const char *title_text) {
   create_back_or_power_button();
   title_label = theme_create_page_title(page_screen, title_text);
+
+  // Setup-only: never shown during unlock or the delay/wipe screen.
+  if (current_mode != PIN_PAGE_UNLOCK) {
+    int32_t step = setup_step_for_state(current_state);
+    if (step > 0)
+      theme_create_progress_bar(page_screen, title_label, step,
+                                PIN_SETUP_STEP_COUNT);
+  }
 }
 
 static void build_entry_state(const char *title_text) {
