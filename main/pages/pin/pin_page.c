@@ -375,21 +375,27 @@ static void create_back_or_power_button(void) {
     ui_create_power_button(page_screen, power_btn_cb);
 }
 
-// Number of visible screens in the first-time PIN setup flow (choose,
-// confirm, split, show words). STATE_SETUP_EFUSE is a dialog overlay, not a
-// screen, so it doesn't get a step.
-#define PIN_SETUP_STEP_COUNT 4
+// Steps of the PIN-construction wizard (choose, confirm, split). Verifying
+// the current PIN (change mode) and showing anti-phishing words (deferred
+// eFuse epilogue) are uncounted bookends: STATE_SETUP_SHOW_WORDS only runs
+// when eFuse provisioning is accepted and succeeds, so it isn't a guaranteed
+// step. STATE_SETUP_EFUSE is a dialog overlay, not a screen. Adding a setup
+// screen means adding an enum member here; SETUP_STEP_COUNT tracks it.
+enum {
+  SETUP_STEP_FULL_PIN = 1,
+  SETUP_STEP_CONFIRM_PIN,
+  SETUP_STEP_SPLIT,
+  SETUP_STEP_COUNT = SETUP_STEP_SPLIT,
+};
 
 static int32_t setup_step_for_state(pin_flow_state_t state) {
   switch (state) {
   case STATE_SETUP_FULL_PIN:
-    return 1;
+    return SETUP_STEP_FULL_PIN;
   case STATE_SETUP_CONFIRM_PIN:
-    return 2;
+    return SETUP_STEP_CONFIRM_PIN;
   case STATE_SETUP_SPLIT:
-    return 3;
-  case STATE_SETUP_SHOW_WORDS:
-    return 4;
+    return SETUP_STEP_SPLIT;
   default:
     return 0;
   }
@@ -399,13 +405,11 @@ static void build_chrome(const char *title_text) {
   create_back_or_power_button();
   title_label = theme_create_page_title(page_screen, title_text);
 
-  // Setup-only: never shown during unlock or the delay/wipe screen.
-  if (current_mode != PIN_PAGE_UNLOCK) {
-    int32_t step = setup_step_for_state(current_state);
-    if (step > 0)
-      theme_create_progress_bar(page_screen, title_label, step,
-                                PIN_SETUP_STEP_COUNT);
-  }
+  // Unlock, delay, and wipe states all map to 0; only setup screens get a
+  // bar.
+  int32_t step = setup_step_for_state(current_state);
+  if (step > 0)
+    theme_create_progress_bar(page_screen, title_label, step, SETUP_STEP_COUNT);
 }
 
 static void build_entry_state(const char *title_text) {

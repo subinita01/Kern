@@ -202,6 +202,7 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
 
 lv_obj_t *theme_create_progress_bar(lv_obj_t *parent, lv_obj_t *anchor,
                                     int32_t current, int32_t total) {
+  LV_ASSERT_NULL(anchor);
   if (!parent || total <= 0)
     return NULL;
 
@@ -217,11 +218,8 @@ lv_obj_t *theme_create_progress_bar(lv_obj_t *parent, lv_obj_t *anchor,
   lv_obj_set_style_radius(bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
   lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
 
-  if (anchor)
-    lv_obj_align_to(bar, anchor, LV_ALIGN_OUT_BOTTOM_MID, 0,
-                    theme_small_padding());
-  else
-    lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, theme_default_padding());
+  lv_obj_align_to(bar, anchor, LV_ALIGN_OUT_BOTTOM_MID, 0,
+                  theme_small_padding());
   return bar;
 }
 
