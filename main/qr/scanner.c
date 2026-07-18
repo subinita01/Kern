@@ -60,6 +60,10 @@
 #define QR_ROI_SIZE_QUANTUM 16
 #define QR_ROI_SHRINK_HYSTERESIS (2 * QR_ROI_SIZE_QUANTUM)
 #define QR_ROI_FAILED_DECODE_LIMIT 10
+// While the settings overlay is open, only every Nth camera frame is
+// processed so PPA work and full-image LVGL invalidations don't starve
+// touch handling; the preview still updates enough to judge exposure.
+#define SETTINGS_PREVIEW_FRAME_DIVISOR 8
 #define MAX_QR_PARTS 100
 #ifdef QR_PERF_DEBUG
 #define FPS_LOG_INTERVAL_MS 2000
@@ -1078,6 +1082,15 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
+  if (settings_active) {
+    static uint8_t settings_frame_count = 0;
+    if (++settings_frame_count < SETTINGS_PREVIEW_FRAME_DIVISOR) {
+      __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
+      return;
+    }
+    settings_frame_count = 0;
+  }
+
   static bool resolution_mismatch_logged = false;
   if (!resolution_mismatch_logged && (camera_buf_hes != CAMERA_INPUT_WIDTH ||
                                       camera_buf_ves != CAMERA_INPUT_HEIGHT)) {
@@ -1194,7 +1207,8 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   // the decoder hands it back on the return queue. If the display swap was
   // skipped (lock contention), current may still be the buffer the decoder
   // holds — never queue that one, or a single pointer would carry two leases.
-  if (qr_frame_queue && current_display_buffer != held_decode_buffer) {
+  if (qr_frame_queue && !settings_active &&
+      current_display_buffer != held_decode_buffer) {
     qr_frame_data_t frame_data = {.frame_data = current_display_buffer,
                                   .width = CAMERA_SCREEN_WIDTH,
                                   .height = CAMERA_SCREEN_HEIGHT};
